@@ -37,6 +37,7 @@ use template_distribution_sv2::{
     MESSAGE_TYPE_SET_NEW_PREV_HASH, MESSAGE_TYPE_SUBMIT_SOLUTION,
 };
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -76,14 +77,13 @@ struct CoinbaseConstraints {
 /// Per-session persisted `CoinbaseOutputConstraints` (None until first decode on this session).
 type ConstraintsState = Arc<std::sync::Mutex<Option<CoinbaseConstraints>>>;
 
-fn template_id_for_cache(tmpl: &AzcoinTemplate) -> u64 {
-    tmpl.height.max(1)
+fn allocate_template_id(counter: &AtomicU64) -> u64 {
+    counter.fetch_add(1, Ordering::SeqCst)
 }
 
-fn insert_template_id_cache(cache: &TemplateIdCache, tmpl: &AzcoinTemplate) {
-    let tid = template_id_for_cache(tmpl);
+fn insert_template_id_cache(cache: &TemplateIdCache, template_id: u64, tmpl: &AzcoinTemplate) {
     let mut m = cache.lock().expect("template_id cache lock");
-    m.insert(tid, tmpl.clone());
+    m.insert(template_id, tmpl.clone());
     while m.len() > TEMPLATE_ID_CACHE_CAP {
         if let Some(k) = m.keys().min().copied() {
             m.remove(&k);
@@ -94,7 +94,7 @@ fn insert_template_id_cache(cache: &TemplateIdCache, tmpl: &AzcoinTemplate) {
     let len = m.len();
     drop(m);
     info!(
-        template_id = tid,
+        template_id,
         cache_len = len,
         height = tmpl.height,
         "template_id cache: inserted snapshot"
@@ -156,6 +156,7 @@ async fn handle_connection(
     rpc: Arc<RpcClient>,
 ) -> Result<()> {
     let template_cache: TemplateIdCache = Arc::new(std::sync::Mutex::new(HashMap::new()));
+    let next_template_id = Arc::new(AtomicU64::new(1));
     let constraints_state: ConstraintsState = Arc::new(std::sync::Mutex::new(None));
 
     // ---- Noise NX handshake (responder side) --------------------------------
@@ -419,6 +420,7 @@ async fn handle_connection(
         &mut template_rx,
         template_cache.clone(),
         constraints_state.clone(),
+        next_template_id.clone(),
     )
     .await
     {
@@ -441,6 +443,7 @@ async fn handle_connection(
                 template_rx.clone(),
                 template_cache.clone(),
                 constraints_state.clone(),
+                next_template_id.clone(),
             )
             .await
         }
@@ -474,6 +477,7 @@ async fn run_template_distribution_init(
     template_rx: &mut watch::Receiver<Option<AzcoinTemplate>>,
     template_cache: TemplateIdCache,
     constraints_state: ConstraintsState,
+    next_template_id: Arc<AtomicU64>,
 ) -> Result<()> {
     info!(
         peer = %peer,
@@ -549,12 +553,13 @@ async fn run_template_distribution_init(
     );
 
     let tmpl = wait_for_template(template_rx).await?;
+    let template_id = allocate_template_id(&next_template_id);
 
     if let Err(reason) = validate_template_under_constraints(&tmpl, persisted) {
         warn!(
             peer = %peer,
             height = tmpl.height,
-            template_id = tmpl.height.max(1),
+            template_id,
             size_limit = tmpl.size_limit,
             sigop_limit = tmpl.sigop_limit,
             tx_count = tmpl.transactions.len(),
@@ -566,12 +571,12 @@ async fn run_template_distribution_init(
         return Ok(());
     }
 
-    send_template_pair(stream, transport_state, &tmpl, peer).await?;
-    insert_template_id_cache(&template_cache, &tmpl);
+    send_template_pair(stream, transport_state, template_id, &tmpl, peer).await?;
+    insert_template_id_cache(&template_cache, template_id, &tmpl);
 
     info!(
         peer = %peer,
-        template_id = tmpl.height.max(1),
+        template_id,
         height = tmpl.height,
         prev_hash_rpc_hex = %tmpl.previous_block_hash,
         outbound = "NewTemplate then SetNewPrevHash",
@@ -696,6 +701,7 @@ fn validate_template_under_constraints(
 async fn send_template_pair<W: AsyncWrite + Unpin>(
     stream: &mut W,
     transport_state: &mut codec_sv2::State,
+    template_id: u64,
     tmpl: &AzcoinTemplate,
     peer: SocketAddr,
 ) -> Result<()> {
@@ -704,7 +710,6 @@ async fn send_template_pair<W: AsyncWrite + Unpin>(
         height = tmpl.height,
         "send_template_pair: start"
     );
-    let template_id = tmpl.height.max(1);
     let prev = crate::template::prev_hash_bytes_from_rpc_hex(&tmpl.previous_block_hash)
         .map_err(|e| {
             error!(
@@ -1148,7 +1153,7 @@ async fn log_and_dispatch_post_init_sv2_frame(
                         t
                     }
                     None => {
-                        let latest_id = template_rx.borrow().as_ref().map(template_id_for_cache);
+                        let latest_id = template_rx.borrow().as_ref().map(|t| t.height.max(1));
                         warn!(
                             peer = %peer,
                             submitted_template_id = template_id,
@@ -1250,11 +1255,13 @@ async fn drain_encrypted_frames_with_live_updates(
     template_rx: watch::Receiver<Option<AzcoinTemplate>>,
     template_cache: TemplateIdCache,
     constraints_state: ConstraintsState,
+    next_template_id: Arc<AtomicU64>,
 ) -> Result<()> {
     let mut read_transport_state = transport_state.clone();
     let peer_w = peer;
     let tc_writer = template_cache.clone();
     let cs_writer = constraints_state.clone();
+    let ntid_writer = next_template_id.clone();
 
     tokio::spawn(async move {
         info!(
@@ -1323,6 +1330,7 @@ async fn drain_encrypted_frames_with_live_updates(
                         height = latest_payload.template.height,
                         "SV2 live writer: calling send_template_pair"
                     );
+                    let template_id = allocate_template_id(&ntid_writer);
                     let active_constraints = cs_writer
                         .lock()
                         .expect("constraints state lock")
@@ -1334,7 +1342,7 @@ async fn drain_encrypted_frames_with_live_updates(
                         warn!(
                             peer = %peer_w,
                             height = latest_payload.template.height,
-                            template_id = latest_template_id,
+                            template_id,
                             size_limit = latest_payload.template.size_limit,
                             sigop_limit = latest_payload.template.sigop_limit,
                             tx_count = latest_payload.template.transactions.len(),
@@ -1356,13 +1364,14 @@ async fn drain_encrypted_frames_with_live_updates(
                     match send_template_pair(
                         &mut wh,
                         &mut write_transport_state,
+                        template_id,
                         &latest_payload.template,
                         peer_w,
                     )
                     .await
                     {
                         Ok(()) => {
-                            insert_template_id_cache(&tc_writer, &latest_payload.template);
+                            insert_template_id_cache(&tc_writer, template_id, &latest_payload.template);
                             info!(
                                 peer = %peer_w,
                                 height = latest_payload.template.height,
