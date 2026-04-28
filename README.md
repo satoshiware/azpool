@@ -1,8 +1,8 @@
-# azcoin-template-provider **0.2.0**
+# azcoin-template-provider **0.2.1**
 
 Stable baseline for the AZCOIN Stratum V2 mining path. This service sits between `azcoind` and `pool_sv2`: it polls the node for block templates, converts them into SV2 Template Distribution messages, pushes fresh work to the pool, accepts `SubmitSolution` when a block is found, assembles the full block, and submits it via `submitblock`.
 
-**Release 0.2.0** is the first clean baseline where live template delivery, block submission, and on-chain reward crediting have been proven end to end. This document matches crate version **0.2.0** (`Cargo.toml`).
+**Release 0.2.1** keeps the proven 0.2.0 design and closes the remaining `pool_sv2` compatibility gaps around template identity, `CoinbaseOutputConstraints`, and `RequestTransactionData`. This document matches crate version **0.2.1** (`Cargo.toml`).
 
 ---
 
@@ -16,7 +16,7 @@ Stable baseline for the AZCOIN Stratum V2 mining path. This service sits between
 
 ---
 
-## Scope of 0.2.0
+## Scope of 0.2.1
 
 ### Included
 
@@ -25,9 +25,12 @@ Stable baseline for the AZCOIN Stratum V2 mining path. This service sits between
 - Live SV2 template roll-forward when the poller detects meaningful template changes.
 - `SubmitSolution` (message type **118** / `0x76`) decode and handling.
 - Full block assembly from solved template + coinbase, then `submitblock`.
-- Template-id cache for solved-template lookup (bounded LRU-style by height key).
+- Monotonic `template_id` allocation with exact snapshot caching by allocated ID.
 - BIP34 coinbase height prefix in `NewTemplate.coinbase_prefix`.
 - Witness commitment output in `NewTemplate` when `default_witness_commitment` is present.
+- `CoinbaseOutputConstraints` persistence plus size/sigops gating before templates are sent.
+- `RequestTransactionData` success/error handling using cached transaction data.
+- Startup log of the exact authority public key to paste into `pool_sv2` config.
 - Dedicated read vs write `codec_sv2::State` so the live template writer is not starved by the session read loop.
 - Deeper broadcast buffer for bursty template updates (see `TEMPLATE_BROADCAST_BUFFER_DEPTH` in `main.rs`).
 - Structured logs for template push, submit flow, and node acceptance/rejection.
@@ -93,7 +96,7 @@ Typical deployment paths (adjust for your host):
 
 ---
 
-## Proven runtime behavior (0.2.0)
+## Proven runtime behavior (0.2.1)
 
 - Pool receives live `NewTemplate` and `SetNewPrevHash`.
 - Pool sends `SubmitSolution` on found block.
@@ -101,18 +104,20 @@ Typical deployment paths (adjust for your host):
 - `azcoind` accepts the block via `submitblock` (null result).
 - Accepted blocks land on-chain; rewards credit to the payout path configured in pool/node policy (immature coinbase outputs in the operator wallet is the common deployment pattern).
 
-**What 0.2.0 does not prove:** per-miner accounting, authoritative worker ledgers, or a payout engine — build those as separate services.
+**What 0.2.1 does not prove:** per-miner accounting, authoritative worker ledgers, or a payout engine — build those as separate services.
 
 ---
 
 ## Critical fixes that define the clean baseline
 
 1. **`SubmitSolution`** — Post-setup frames with `msg_type == 118` are decoded and routed to block assembly + `submitblock`.
-2. **Template-id cache** — Solved blocks use the cached GBT snapshot for the submitted `template_id`, not only the latest template.
-3. **BIP34 height** — `coinbase_prefix` carries correct BIP34-encoded block height for `NewTemplate`.
-4. **Witness commitment** — When `default_witness_commitment` is set, the placeholder coinbase includes the zero-value witness-commitment output.
-5. **Dedicated read/write codec state** — After init, the TCP stream splits: one task owns the write path and its own `codec_sv2::State`; the read loop keeps a clone for decrypting inbound frames. This removed starvation where the writer blocked behind the reader so the pool mined stale work.
-6. **Broadcast depth** — Larger `broadcast` capacity reduces drops during bursty template updates (watch for `SV2 template update receiver lagged` if the system is overloaded).
+2. **Monotonic template IDs** — Every meaningful template update gets a unique allocated `template_id`; solved blocks and transaction-data requests resolve against the exact cached snapshot for that ID.
+3. **`RequestTransactionData`** — The provider now returns `RequestTransactionDataSuccess` for cached templates and `RequestTransactionDataError` with `template-id-not-found` for unknown/stale IDs.
+4. **Coinbase output constraints** — The latest per-session `CoinbaseOutputConstraints` are persisted and used to reject templates that cannot safely fit the pool’s reserved output bytes/sigops.
+5. **BIP34 height** — `coinbase_prefix` carries correct BIP34-encoded block height for `NewTemplate`.
+6. **Witness commitment** — When `default_witness_commitment` is set, the placeholder coinbase includes the zero-value witness-commitment output.
+7. **Dedicated read/write codec state** — After init, the TCP stream splits: one task owns the write path and its own `codec_sv2::State`; the read loop keeps a clone for decrypting inbound frames. This removed starvation where the writer blocked behind the reader so the pool mined stale work.
+8. **Broadcast depth** — Larger `broadcast` capacity reduces drops during bursty template updates (watch for `SV2 template update receiver lagged` if the system is overloaded).
 
 ### Why the read/write split mattered
 
@@ -124,9 +129,9 @@ Healthy signals after the fix: `skipped_intermediate` at or near **0** during no
 
 ## Data flow (implementation)
 
-1. **`poller`** calls `getblocktemplate`, builds [`AzcoinTemplate`](src/template.rs), updates a `watch` channel, and on meaningful change sends [`TemplateUpdatePayload`](src/template.rs) on a `broadcast` channel for live SV2 pushes.
-2. **`tp_server`** completes Noise NX, `SetupConnection` (Template Distribution, protocol version 2), reads `CoinbaseOutputConstraints`, sends initial `NewTemplate` + `SetNewPrevHash`, then runs a read loop plus a writer task subscribed to template broadcasts.
-3. **Inbound `SubmitSolution`** — Parsed in `log_and_dispatch_post_init_sv2_frame`; block bytes built in `block_bytes_from_submit_solution`; submitted with [`RpcClient::submit_block`](src/rpc.rs).
+1. **`poller`** calls `getblocktemplate`, builds [`AzcoinTemplate`](src/template.rs), allocates a monotonic provider-side `template_id` for each meaningful update, updates a `watch` channel with the latest [`TemplateSnapshot`](src/template.rs), and sends [`TemplateUpdatePayload`](src/template.rs) on a `broadcast` channel for live SV2 pushes.
+2. **`tp_server`** completes Noise NX, `SetupConnection` (Template Distribution, protocol version 2), reads `CoinbaseOutputConstraints`, validates the current template against the reserved coinbase headroom, sends initial `NewTemplate` + `SetNewPrevHash`, then runs a read loop plus a writer task subscribed to template broadcasts.
+3. **Inbound `SubmitSolution` / `RequestTransactionData`** — Parsed in `log_and_dispatch_post_init_sv2_frame`; solved blocks are assembled from the exact cached snapshot and submitted with [`RpcClient::submit_block`](src/rpc.rs); transaction-data requests return the cached non-coinbase transactions plus excess data.
 
 Framing note: outbound Template Distribution uses **`extension_type == 0`** and **`channel_msg == false`**, consistent with common-message framing and typical `pool_sv2` classifiers.
 
@@ -143,8 +148,8 @@ Framing note: outbound Template Distribution uses **`extension_type == 0`** and 
 | `network` | string | yes | — | Expected chain name from `getblockchaininfo` |
 | `template_rules` | string[] | no | `[]` | BIP rules for `getblocktemplate` |
 | `tp_listen_address` | string | no | `0.0.0.0:8442` | TCP for SV2 Noise listener |
-| `authority_public_key` | string | no | `""` | Noise authority public key (64 hex); empty disables SV2 |
-| `authority_secret_key` | string | no | `""` | Noise authority secret key (64 hex) |
+| `authority_public_key` | string | no | `""` | Hex-encoded 32-byte secp256k1 x-only public key for `pool_sv2` `[template_provider_type.Sv2Tp].public_key`; empty disables SV2 |
+| `authority_secret_key` | string | no | `""` | Hex-encoded 32-byte secp256k1 secret key matching `authority_public_key` |
 
 Copy and edit the example file:
 
@@ -160,7 +165,7 @@ Add `config/azcoin-template-provider.toml` to `.gitignore` if it holds secrets.
 
 ```bash
 cargo build --release
-cargo test    # 17 unit tests (config, rpc submitblock results, template change detection, fixtures)
+cargo test    # 25 unit tests (config, RPC submitblock results, template change detection, constraints, tx-data responses)
 ```
 
 ```bash
@@ -171,6 +176,17 @@ RUST_LOG=debug cargo run
 ```
 
 If authority keys are empty, the service runs **poller-only** (no SV2 listener).
+
+### `pool_sv2` public key format
+
+Paste the exact configured `authority_public_key` value into `pool_sv2` under:
+
+```toml
+[template_provider_type.Sv2Tp]
+public_key = "<authority_public_key>"
+```
+
+The expected encoding is **hex**, not base58 or base58-check. The value is the raw **32-byte secp256k1 x-only public key**. On startup the provider logs the exact normalized hex string it expects the pool to use.
 
 ---
 
@@ -208,7 +224,7 @@ sudo journalctl -u pool-sv2.service --since '30 minutes ago' --no-pager | \
 
 ## Reward routing (operational truth)
 
-Coinbase pays the addresses encoded by pool/template rules in your deployment. **Template Provider 0.2.0 does not implement per-miner payout splits** — the operator or pool layer must add share accounting, balances, and payout policy separately.
+Coinbase pays the addresses encoded by pool/template rules in your deployment. **Template Provider 0.2.1 does not implement per-miner payout splits** — the operator or pool layer must add share accounting, balances, and payout policy separately.
 
 ---
 
@@ -261,9 +277,9 @@ If `azcoind` adds fields, extend `Rpc*` types in `src/template.rs` and extend fi
 
 ---
 
-## Release statement (0.2.0)
+## Release statement (0.2.1)
 
-Template Provider **0.2.0** is the stable baseline that demonstrates: stable live template roll-forward, correct solved-template reconstruction, successful `submitblock` acceptance, on-chain blocks, and operator-side reward visibility through normal coinbase flow — **not** a complete payout product.
+Template Provider **0.2.1** keeps the stable 0.2.0 baseline and adds the missing `pool_sv2` correctness pieces: monotonic template identity, transaction-data responses, coinbase-output-constraint enforcement, and explicit authority public-key guidance — **not** a complete payout product.
 
 **Short version:** it sends the right work, receives solved blocks, gets them accepted, and produces real on-chain rewards. Per-miner payout systems are out of scope for this crate.
 

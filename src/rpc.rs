@@ -171,7 +171,10 @@ mod tests {
     #[test]
     fn submitblock_null_result_means_accepted() {
         let result: Option<String> = serde_json::from_value(Value::Null).unwrap();
-        assert!(result.is_none(), "null should deserialize to None (accepted)");
+        assert!(
+            result.is_none(),
+            "null should deserialize to None (accepted)"
+        );
     }
 
     #[test]
