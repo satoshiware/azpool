@@ -1,4 +1,4 @@
-//! SV2 Template Provider (**0.2.1** baseline): Noise, `SetupConnection`, Template Distribution, live
+//! SV2 Template Provider (**0.2.0** stable): Noise, `SetupConnection`, Template Distribution, live
 //! roll-forward, and `SubmitSolution` → full block → [`crate::rpc::RpcClient::submit_block`].
 //!
 //! # Role in the mining path
@@ -1414,7 +1414,7 @@ async fn log_and_dispatch_post_init_sv2_frame(
                         snapshot
                     }
                     None => {
-                        let latest_id = template_rx.borrow().as_ref().map(template_id_for_cache);
+                        let latest_id = template_rx.borrow().as_ref().map(|s| s.template_id);
                         warn!(
                             peer = %peer,
                             submitted_template_id = template_id,
@@ -1946,7 +1946,7 @@ fn decode_key(hex_str: &str, name: &str) -> Result<[u8; 32]> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::template::{AzcoinTemplate, TemplateTx};
+    use crate::template::{AzcoinTemplate, TemplateSnapshot, TemplateTx};
 
     fn make_tmpl(
         transactions: Vec<TemplateTx>,
