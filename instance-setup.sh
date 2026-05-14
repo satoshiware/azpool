@@ -13,10 +13,10 @@ set -euo pipefail
 #   • Static IP support (optional)
 #
 # Prerequisites (must be in the same directory as this script):
-#   • azpool-instance.env          ← Main configuration file (Carefully review/update)
-#   • azpool-install.azcoin.sh
-#   • translator-install.azcoin.sh
-#   • az-coinbase-updater.sh
+#   • instance-setup.env          ← Main configuration file (Carefully review/update)
+#   • pool-install.sh
+#   • translator-install.sh
+#   • coinbase-updater.sh
 #
 # Key Features:
 #   • Automatic download + SHA256 verification of components
@@ -31,7 +31,7 @@ set -euo pipefail
 # =============================================================================
 
 AZPOOL_BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENV_FILE="${AZPOOL_BASE_DIR}/azpool-instance.env"
+ENV_FILE="${AZPOOL_BASE_DIR}/instance-setup.env"
 LOG_FILE="/var/log/azpool-instance-setup.log"
 
 log() {
@@ -66,7 +66,7 @@ log "=== End of Environment File ==="
 log "Securing environment file (root:root 600) to protect secrets..."
 chown root:root "$ENV_FILE"
 chmod 600 "$ENV_FILE"
-log "azpool-instance.env secured successfully"
+log "instance-setup.env secured successfully"
 
 # ===================== ENVIRONMENT VALIDATION =====================
 log "=== ENVIRONMENT VALIDATION ==="
@@ -117,9 +117,9 @@ log "✓ Python 3 detected"
 log "=== Verifying Required Installer Scripts ==="
 
 REQUIRED_SCRIPTS=(
-    "azpool-install.azcoin.sh"
-    "translator-install.azcoin.sh"
-    "az-coinbase-updater.sh"
+    "pool-install.sh"
+    "translator-install.sh"
+    "coinbase-updater.sh"
 )
 
 for script in "${REQUIRED_SCRIPTS[@]}"; do
@@ -302,37 +302,37 @@ log "Client Public Key (share with backend): ${CLIENT_PUBLIC_KEY}"
 # ===================== COMPONENT INSTALLATION =====================
 log "=== Installing AZCoin SV2 Pool ==="
 if [[ -n "${AUTHORITY_SECRET_KEY:-}" ]]; then
-    "${AZPOOL_BASE_DIR}/azpool-install.azcoin.sh" \
+    "${AZPOOL_BASE_DIR}/pool-install.sh" \
         "${POOL_TAR_LOCAL}" \
         "${TEMPLATE_PROVIDER_ADDR}" \
         "${TEMPLATE_PROVIDER_PUBKEY}" \
         "${AUTHORITY_SECRET_KEY}"
 else
-    "${AZPOOL_BASE_DIR}/azpool-install.azcoin.sh" \
+    "${AZPOOL_BASE_DIR}/pool-install.sh" \
         "${POOL_TAR_LOCAL}" \
         "${TEMPLATE_PROVIDER_ADDR}" \
         "${TEMPLATE_PROVIDER_PUBKEY}"
 fi
 
 log "=== Installing Translator ==="
-"${AZPOOL_BASE_DIR}/translator-install.azcoin.sh" "${TRANSLATOR_TAR_LOCAL}"
+"${AZPOOL_BASE_DIR}/translator-install.sh" "${TRANSLATOR_TAR_LOCAL}"
 
 # ===================== COINBASE UPDATER =====================
 log "=== Installing Coinbase Updater ==="
 
 # Copy script
-cp "${AZPOOL_BASE_DIR}/az-coinbase-updater.sh" /usr/local/bin/az-coinbase-updater.sh
+cp "${AZPOOL_BASE_DIR}/coinbase-updater.sh" /usr/local/bin/coinbase-updater.sh
 
 # Set very strict permissions (root only)
-chmod 700 /usr/local/bin/az-coinbase-updater.sh
-chown root:root /usr/local/bin/az-coinbase-updater.sh
+chmod 700 /usr/local/bin/coinbase-updater.sh
+chown root:root /usr/local/bin/coinbase-updater.sh
 
-log "✓ az-coinbase-updater.sh installed with 700 permissions (root only to protect AZCOIN_RPC_PASS credential)"
+log "✓ coinbase-updater.sh installed with 700 permissions (root only to protect AZCOIN_RPC_PASS credential)"
 
 # Inject RPC credentials
 log "Injecting AZCoin RPC credentials..."
-sed -i "s|RPC_USER=.*|RPC_USER=\"${AZCOIN_RPC_USER}\"|" /usr/local/bin/az-coinbase-updater.sh
-sed -i "s|RPC_PASS=.*|RPC_PASS=\"${AZCOIN_RPC_PASS}\"|" /usr/local/bin/az-coinbase-updater.sh
+sed -i "s|RPC_USER=.*|RPC_USER=\"${AZCOIN_RPC_USER}\"|" /usr/local/bin/coinbase-updater.sh
+sed -i "s|RPC_PASS=.*|RPC_PASS=\"${AZCOIN_RPC_PASS}\"|" /usr/local/bin/coinbase-updater.sh
 
 log "✓ RPC credentials injected"
 
@@ -346,12 +346,12 @@ cat > /etc/cron.d/az-coinbase-updater << 'EOF'
 
 # ==================== ACTIVE (CURRENT) =====================
 # Daily rotation @ 3:15 AM - Use this while restarts are required
-15 3 * * * root /usr/local/bin/az-coinbase-updater.sh
+15 3 * * * root /usr/local/bin/coinbase-updater.sh
 
 # ==================== FUTURE (HOT-SWAP READY) ==============
 # Uncomment this (comment the first) when hot-swap / reload SRI SV2 Pool capability is ready
 # Every 2 minutes (recommended frequency with hot-swap)
-# */10 * * * * root /usr/local/bin/az-coinbase-updater.sh
+# */10 * * * * root /usr/local/bin/coinbase-updater.sh
 EOF
 
 chmod 644 /etc/cron.d/az-coinbase-updater
@@ -394,7 +394,7 @@ Authority Public Key: ${AUTHORITY_PUBLIC_KEY}
 Coinbase Updater:
   • Updates the coinbase output (payout address) for newly mined blocks to keep things fresh.
   • Current schedule → sudo nano /etc/cron.d/az-coinbase-updater
-  • Run manually anytime → sudo az-coinbase-updater.sh
+  • Run manually anytime → sudo coinbase-updater.sh
 
 Documentation
 ─────────────
@@ -406,7 +406,7 @@ Key Locations
   • Pool Config:          /etc/azpool/azpool.toml
   • Translator Config:    /etc/translator/translator.toml
   • WireGuard Config:     /etc/wireguard/wg0.conf
-  • Coinbase Updater:     /usr/local/bin/az-coinbase-updater.sh
+  • Coinbase Updater:     /usr/local/bin/coinbase-updater.sh
 
 Logs
 ────
@@ -443,7 +443,7 @@ Post-Setup Checklist (AZCoin Pool Instance)
     • Test connectivity: ping -c 3 10.8.0.1 && wg show
 
 [ ] 3. Coinbase Updater
-    • Run coinbase updater manually: sudo az-coinbase-updater.sh
+    • Run coinbase updater manually: sudo coinbase-updater.sh
     • Verify success and that coinbase_reward_script is now set in /etc/azpool/azpool.toml
     • Enabled/Start Pool Service: sudo systemctl enable --now azpool
     • Restart the machine for good measure: sudo reboot now

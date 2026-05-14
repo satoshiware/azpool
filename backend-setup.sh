@@ -10,8 +10,8 @@ set -euo pipefail
 #          'satoshi' sudo user.
 #
 # Prerequisites (must be in the same directory as this script):
-#   • azpool-backend.env          ← Main configuration file (Carefully review/update)
-#   • azcoin-install.azpool.sh
+#   • backend-setup.env          ← Main configuration file (Carefully review/update)
+#   • azcoin-install.sh
 #   • templar-install.sh
 #   • payouts-install.azpool.sh
 #
@@ -28,7 +28,7 @@ set -euo pipefail
 # =============================================================================
 
 AZPOOL_BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENV_FILE="${AZPOOL_BASE_DIR}/azpool-backend.env"
+ENV_FILE="${AZPOOL_BASE_DIR}/backend-setup.env"
 LOG_FILE="/var/log/azpool-backend-setup.log"
 
 log() {
@@ -46,7 +46,7 @@ fi
 # ===================== LOAD ENVIRONMENT =====================
 if [[ ! -f "$ENV_FILE" ]]; then
     log "ERROR: Environment file not found: $ENV_FILE"
-    log "Please create azpool-backend.env in the same directory."
+    log "Please create backend-setup.env in the same directory."
     exit 1
 fi
 
@@ -116,7 +116,7 @@ log "✓ Python 3 detected"
 log "=== Verifying Required Installer Scripts ==="
 
 REQUIRED_SCRIPTS=(
-    "azcoin-install.azpool.sh"
+    "azcoin-install.sh"
     "templar-install.sh"
     "payouts-install.azpool.sh"
 )
@@ -416,7 +416,7 @@ log "WireGuard client manager installed to /usr/local/bin/manage-wireguard-clien
 
 # ===================== COMPONENT INSTALLATION =====================
 log "=== Installing AZCoin Node ==="
-./azcoin-install.azpool.sh \
+./azcoin-install.sh \
     "${AZPOOL_BASE_DIR}/azcoin.tar" \
     "${AZCOIN_DBCACHE}" \
     "${AZCOIN_MAXMEMPOOL}" \

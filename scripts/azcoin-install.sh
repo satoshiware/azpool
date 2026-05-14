@@ -7,7 +7,7 @@ set -euo pipefail
 # Purpose: Install and configure a dedicated AZCoin Core node optimized as a
 #          reliable backend for mining pool operations.
 #
-# Usage: ./azcoin-install.azpool.sh <tarball_path> <dbcache> <maxmempool> <port> <seednode> [enable]
+# Usage: ./azcoin-install.sh <tarball_path> <dbcache> <maxmempool> <port> <seednode> [enable]
 #
 # Parameters:
 #   <tarball>      : Path to the azcoin-*.tar.gz file
@@ -40,7 +40,7 @@ set -euo pipefail
 # See azcoin.txt (created at the end) for futher documentation.
 # =============================================================================
 
-LOG_FILE="/var/log/azcoin-install.azpool.log"
+LOG_FILE="/var/log/azcoin-install.log"
 log() {
     echo "$*" | tee -a "$LOG_FILE"
 }
@@ -232,7 +232,7 @@ wallet=wallet
 # Logs to /var/log/azcoin/wallet_events.log
 walletnotify=/usr/local/bin/azcoin_wallet_event_append.sh %s %w
 
-# Whitelist to limit 'coinbase' user access (used by az-coinbase-updater.sh)
+# Whitelist to limit 'coinbase' user access (used by coinbase-updater.sh)
 rpcwhitelist=coinbase: \
     getnewaddress, \
     getaddressinfo, \
@@ -583,5 +583,5 @@ Adding users to azcoin group: sudo usermod -aG azcoin <app_user_name>
 EOF
 
 log "Setup complete!"
-log "azcoin-install.azpool setup log file: ${LOG_FILE}"
+log "azcoin-install setup log file: ${LOG_FILE}"
 log "Readme file: /usr/local/share/doc/azcoin.txt"

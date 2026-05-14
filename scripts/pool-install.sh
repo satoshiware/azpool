@@ -10,11 +10,11 @@ set -euo pipefail
 #   - Native SV2 listener on port 3337
 #   - Automatic keypair generation or derivation (if AUTHORITY_SECRET_KEY is not passed to this script)
 #   - Full verbose configuration with detailed comments
-#   - Coinbase uses placeholder (updated by az-coinbase-updater.sh)
+#   - Coinbase uses placeholder (updated by coinbase-updater.sh)
 #
 # Usage:
-#   ./pool-install.azcoin.sh <POOL_TAR> <TEMPLATE_PROVIDER_ADDR> <TEMPLATE_PROVIDER_PUBKEY>
-#   ./pool-install.azcoin.sh <POOL_TAR> <TEMPLATE_PROVIDER_ADDR> <TEMPLATE_PROVIDER_PUBKEY> <AUTHORITY_SECRET_KEY>
+#   ./pool-install.sh <POOL_TAR> <TEMPLATE_PROVIDER_ADDR> <TEMPLATE_PROVIDER_PUBKEY>
+#   ./pool-install.sh <POOL_TAR> <TEMPLATE_PROVIDER_ADDR> <TEMPLATE_PROVIDER_PUBKEY> <AUTHORITY_SECRET_KEY>
 #
 # Required Arguments:
 #   1. POOL_TAR                    → Full path to pool_sv2 tar.gz
@@ -328,7 +328,7 @@ Management Commands:
 Notes:
   • Make sure authority public/secret keys are the same across all pool instances.
     DON'T FORGET THE LOCAL TRANSLATOR (/etc/translator/translator.toml).
-  • After initial installation, run the az-coinbase-updater.sh to set the coinbase_reward_script.
+  • After initial installation, run the coinbase-updater.sh to set the coinbase_reward_script.
   • The initial installation does NOT start or enable the azpool service.
     After the coinbase_reward_script is updated enable and start azpool:
         systemctl enable azpool     # Enable to automatically start azpool service on boot or restart
@@ -338,4 +338,4 @@ EOF
 log "AZPool installation finished successfully!"
 log "pool-install log: ${LOG_FILE}"
 log "Readme: /usr/local/share/doc/azpool.txt"
-log "NOTE: Service was NOT started/enabled. Use external script: az-coinbase-updater.sh"
+log "NOTE: Service was NOT started/enabled. Use external script: coinbase-updater.sh"

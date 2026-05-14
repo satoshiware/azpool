@@ -23,8 +23,8 @@ It is a **headless** backend system (no GUI) designed to serve as the core infra
 ---
 ## Installation Scripts & Configuration
 Major settings for the installation are stored in two `.env` files:
-- `azpool-backend.env` — Configuration for the Pool Backend
-- `azpool-instance.env` — Configuration for each Pool Instance
+- `backend-setup.env` — Configuration for the Pool Backend
+- `instance-setup.env` — Configuration for each Pool Instance
 
 These files are loaded automatically by the setup scripts.
 
@@ -34,8 +34,8 @@ Verify all download URLs, hashes, and signatures. Adjust ports, credentials, set
 ### Pool Backend
 | Script                        | Purpose                                   | Calls / Installs  |
 |-------------------------------|-------------------------------------------|-------------------|
-| `azpool-backend-setup.sh`     | Main entry point                          | All Scripts Below |
-| `azcoin-install.azpool.sh`    | Installs AZCoin Core                      |        —          |
+| `backend-setup.sh`            | Main entry point                          | All Scripts Below |
+| `azcoin-install.sh`           | Installs AZCoin Core                      |        —          |
 | `templar-install.sh`          | Installs SV2 Template Provider            |        —          |
 | `payouts-install.azpool.sh`   | Installs Payout Engine for AZ Pool        |        —          |
 > Also installs/configures SSH, UFW firewall, WireGuard, etc.
@@ -43,9 +43,9 @@ Verify all download URLs, hashes, and signatures. Adjust ports, credentials, set
 ### Pool Instance
 | Script                          | Purpose                                 | Calls / Installs  |
 |---------------------------------|-----------------------------------------|-------------------|
-| `azpool-instance-setup.sh`      | Main entry point                        | All Scripts Below |
-| `azpool-install.sh`             | Installs the SV2 Pool                   |        —          |
-| `translator-install.azcoin.sh`  | Installs the Pool Level Translator      |        —          |
+| `instance-setup.sh`             | Main entry point                        | All Scripts Below |
+| `pool-install.sh`               | Installs the SV2 Pool                   |        —          |
+| `translator-install.sh`         | Installs the Pool Level Translator      |        —          |
 > Also installs/configures WireGuard, UFW firewall, Coinbase Updater Script, etc.
 ---
 ## Data Flow & Security
@@ -53,7 +53,7 @@ Communication between Pool/SC-Node Miners, SC Node Translators, The Pool Transla
 SV2 connections are encrypted using the Noise Protocol. All other internal communications are covered in the sections below.
 ---
 ### Coinbase Updater
-A simple bash script `az-coinbase-updater.sh` installed at /usr/local/bin/.
+A simple bash script `coinbase-updater.sh` installed at /usr/local/bin/.
 It runs periodically via cron and ensures its Pool Instance always uses a fresh, unspent coinbase payout address.
 It performs the following tasks:
 
@@ -98,16 +98,16 @@ Binrary Location: [sc-node releases](https://github.com/satoshiware/sc-node/rele
 
 2. Carefully configure the environment file:
    ```bash
-   nano azpool-backend.env
+   nano backend-setup.env
    ```
 
-   **Pay very close attention** when editing `azpool-backend.env`.
+   **Pay very close attention** when editing `backend-setup.env`.
    This file contains all critical settings including download URLs, SHA256 checksums, FIDO2 public keys, hostname, ports, and security options.
 
 3. Run the installer:
    ```bash
-   chmod +x azpool-backend-setup.sh
-   sudo ./azpool-backend-setup.sh
+   chmod +x backend-setup.sh
+   sudo ./backend-setup.sh
    ```
 
 4. After installation finishes successfully:
@@ -125,4 +125,4 @@ Binrary Location: [sc-node releases](https://github.com/satoshiware/sc-node/rele
   - Template Provider port
 - Detailed daily management instructions (FIDO2 keys, WireGuard, commands, paths, etc.) are located in `/home/satoshi/readme.txt` on the server.
 
-For more technical details about the setup process, review `azpool-backend-setup.sh`.
+For more technical details about the setup process, review `backend-setup.sh`.

@@ -13,7 +13,7 @@ set -euo pipefail
 #   - Auto-starts (& enables) the translator service
 #
 # Usage:
-#   ./translator-install.azcoin.sh <TRANSLATOR_TAR>
+#   ./translator-install.sh <TRANSLATOR_TAR>
 #
 # Required Arguments:
 #   1. TRANSLATOR_TAR → Full path to the translator_sv2 tar.gz file
