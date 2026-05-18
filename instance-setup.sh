@@ -117,17 +117,17 @@ log "✓ Python 3 detected"
 log "=== Verifying Required Installer Scripts ==="
 
 REQUIRED_SCRIPTS=(
-    "pool-install.sh"
-    "translator-install.sh"
-    "coinbase-updater.sh"
+    "${AZPOOL_BASE_DIR}/scripts/pool-install.sh"
+    "${AZPOOL_BASE_DIR}/scripts/translator-install.sh"
+    "${AZPOOL_BASE_DIR}/scripts/coinbase-updater.sh"
 )
 
 for script in "${REQUIRED_SCRIPTS[@]}"; do
-    if [[ ! -f "${AZPOOL_BASE_DIR}/${script}" ]]; then
+    if [[ ! -f "${script}" ]]; then
         log "ERROR: Required script not found: ${script}"
         exit 1
     else
-        chmod +x "${AZPOOL_BASE_DIR}/${script}"
+        chmod +x "${script}"
         log "✓ Found and made executable: ${script}"
     fi
 done
@@ -251,8 +251,8 @@ log "SSH hardened (root login fully disabled, password login disabled, FIDO2 sup
 
 # ===================== ROOT HARDENING =====================
 log "=== Hardening root account ==="
-usermod -s /usr/sbin/nologin root
-passwd -l root 2>/dev/null || true
+> /etc/securetty 2>/dev/null # Disable root login
+passwd -l root 2>/dev/null # Disable root passwd
 log "Root account fully disabled (nologin shell + locked password)."
 
 # ===================== UFW =====================
@@ -302,20 +302,20 @@ log "Client Public Key (share with backend): ${CLIENT_PUBLIC_KEY}"
 # ===================== COMPONENT INSTALLATION =====================
 log "=== Installing AZCoin SV2 Pool ==="
 if [[ -n "${AUTHORITY_SECRET_KEY:-}" ]]; then
-    "${AZPOOL_BASE_DIR}/pool-install.sh" \
+    ${AZPOOL_BASE_DIR}/scripts/pool-install.sh \
         "${POOL_TAR_LOCAL}" \
         "${TEMPLATE_PROVIDER_ADDR}" \
         "${TEMPLATE_PROVIDER_PUBKEY}" \
         "${AUTHORITY_SECRET_KEY}"
 else
-    "${AZPOOL_BASE_DIR}/pool-install.sh" \
+    ${AZPOOL_BASE_DIR}/scripts/pool-install.sh \
         "${POOL_TAR_LOCAL}" \
         "${TEMPLATE_PROVIDER_ADDR}" \
         "${TEMPLATE_PROVIDER_PUBKEY}"
 fi
 
 log "=== Installing Translator ==="
-"${AZPOOL_BASE_DIR}/translator-install.sh" "${TRANSLATOR_TAR_LOCAL}"
+${AZPOOL_BASE_DIR}/scripts/translator-install.sh "${TRANSLATOR_TAR_LOCAL}"
 
 # ===================== COINBASE UPDATER =====================
 log "=== Installing Coinbase Updater ==="

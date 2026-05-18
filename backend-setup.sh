@@ -254,8 +254,8 @@ log "SSH hardened (root login fully disabled, password login disabled, FIDO2 sup
 
 # ===================== ROOT HARDENING =====================
 log "=== Hardening root account ==="
-usermod -s /usr/sbin/nologin root
-passwd -l root 2>/dev/null || true
+> /etc/securetty 2>/dev/null # Disable root login
+passwd -l root 2>/dev/null # Disable root passwd
 log "Root account fully disabled (nologin shell + locked password)."
 
 # ===================== UFW =====================
@@ -416,7 +416,7 @@ log "WireGuard client manager installed to /usr/local/bin/manage-wireguard-clien
 
 # ===================== COMPONENT INSTALLATION =====================
 log "=== Installing AZCoin Node ==="
-./${AZPOOL_BASE_DIR}/scripts/azcoin-install.sh \
+${AZPOOL_BASE_DIR}/scripts/azcoin-install.sh \
     "${AZPOOL_BASE_DIR}/azcoin.tar" \
     "${AZCOIN_DBCACHE}" \
     "${AZCOIN_MAXMEMPOOL}" \
@@ -425,10 +425,10 @@ log "=== Installing AZCoin Node ==="
     "${AZCOIN_IP_UPDATER_CRON_ENABLE}"
 
 log "=== Installing Templar (SV2 Template Provider) ==="
-./${AZPOOL_BASE_DIR}/scripts/templar-install.sh "${AZPOOL_BASE_DIR}/template-provider.tar" "${TEMPLATE_PROVIDER_PORT}"
+${AZPOOL_BASE_DIR}/scripts/templar-install.sh "${AZPOOL_BASE_DIR}/template-provider.tar" "${TEMPLATE_PROVIDER_PORT}"
 
 log "=== Installing Payouts Engine ==="
-./${AZPOOL_BASE_DIR}/scripts/payouts-install.azpool.sh "${AZPOOL_BASE_DIR}/payout-engine.tar"
+${AZPOOL_BASE_DIR}/scripts/payouts-install.azpool.sh "${AZPOOL_BASE_DIR}/payout-engine.tar"
 
 # ===================== GENERATE README =====================
 log "=== Generating README (/home/satoshi/readme.txt) ==="
