@@ -1,0 +1,25 @@
+[package]
+name = "azcoin-template-provider"
+version = "0.2.0"
+edition = "2021"
+description = "AZCOIN SV2 Template Provider — getblocktemplate polling, live SV2 template distribution, SubmitSolution → submitblock"
+
+[dependencies]
+anyhow = "1"
+binary_sv2 = "5"
+bitcoin = { version = "0.32", default-features = false, features = ["std"] }
+clap = { version = "4", features = ["derive"] }
+codec_sv2 = { version = "5", features = ["noise_sv2"] }
+common_messages_sv2 = "7"
+framing_sv2 = "6"
+hex = "0.4"
+noise_sv2 = "1"
+reqwest = { version = "0.12", features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+template_distribution_sv2 = "5"
+tokio = { version = "1", features = ["full"] }
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+zmq = "0.10"

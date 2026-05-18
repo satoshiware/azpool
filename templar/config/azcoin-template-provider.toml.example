@@ -1,0 +1,122 @@
+# ============================================================================
+# azcoin SV2 Template Provider — example configuration
+# ============================================================================
+#
+# Copy and edit for your deployment:
+#   cp config/azcoin-template-provider.toml.example config/azcoin-template-provider.toml
+#
+# ----------------------------------------------------------------------------
+# Runtime / CLI (not TOML keys)
+# ----------------------------------------------------------------------------
+#
+# Configuration path:
+#   --config <path>   or   -c <path>          (default: config/azcoin-template-provider.toml)
+#
+# One-shot RPC + chain check, then exit (no poller, SV2 listener, or ZMQ thread):
+#   --health-check
+#
+# Log filter (stderr/stdout/journal, and log_file when set):
+#   RUST_LOG=info
+#   RUST_LOG=azcoin_template_provider=debug,info
+#
+# ------------------------------------------------------------------------------
+# Compiled / non-TOML behavior (see src/config.rs, src/main.rs, src/tp_server.rs)
+# ------------------------------------------------------------------------------
+#
+# - Expected chain:  getblockchaininfo.chain must be "main" at startup (health + steady state).
+# - getblocktemplate: rules are hardcoded to ["segwit"] in the binary (not set from this file).
+# - SV2 protocol:   negotiated Template Distribution version 2 only (min = max = 2).
+# - Live template broadcast channel depth: 512 (template updates to SV2 sessions; main.rs).
+#
+# This service is not miner payout or share accounting. Log fields such as
+# coinbase_output_count are SV2/template construction metadata, not payout truth.
+#
+# ----------------------------------------------------------------------------
+# JSON-RPC methods used in normal operation (steady-state main path)
+# ----------------------------------------------------------------------------
+#
+#   getblockchaininfo   — startup / --health-check chain validation
+#   getblocktemplate    — authoritative block templates (after every poll or ZMQ wakeup)
+#   submitblock         — full block submission after SubmitSolution from the pool
+#
+# Optional RPC helpers exist in src/rpc.rs but are not called from main today:
+#   getbestblockhash    — (not "getbesthash"; correct Bitcoin/AZCoin Core name)
+#   getblockheader      — diagnostics
+#
+# ----------------------------------------------------------------------------
+# AZCoin Core ZMQ publisher options (azcoin.conf) vs this file
+# ----------------------------------------------------------------------------
+#
+# Core PUB binds (examples; ports must match your site):
+#   zmqpubrawtx=...
+#   zmqpubhashblock=...
+#   zmqpubsequence=...
+#
+# Template Provider SUB connect URLs (TOML) — all three must be non-empty at load:
+#   zmq_endpoint_rawtx
+#   zmq_endpoint_hashblock
+#   zmq_endpoint_sequence
+#
+# Topics subscribed: rawtx, hashblock, sequence (wakeup hints only; GBT is authoritative).
+#
+# ----------------------------------------------------------------------------
+# Legacy TOML keys (ignored if present)
+# ----------------------------------------------------------------------------
+#
+# network, template_rules, zmq_enabled, zmq_endpoint, zmq_subscribe_*
+# ZMQ wakeup is always configured via the three zmq_endpoint_* keys; poll_interval_ms is
+# the perpetual slower fallback.
+
+# ----------------------------------------------------------------------------
+# RPC connection — use placeholders; match azcoind -rpcuser / -rpcpassword or rpcauth
+# ----------------------------------------------------------------------------
+
+rpc_url = "http://127.0.0.1:19332"
+rpc_user = "REPLACE_RPC_USER"
+rpc_password = "REPLACE_RPC_PASSWORD"
+
+# Milliseconds between getblocktemplate polls (minimum 100). Slower backup if ZMQ is down.
+poll_interval_ms = 1000
+
+# ----------------------------------------------------------------------------
+# ZMQ subscriber connect URLs (match Core zmqpub* binds — see header)
+# ----------------------------------------------------------------------------
+
+zmq_endpoint_rawtx     = "tcp://127.0.0.1:29333"
+zmq_endpoint_hashblock = "tcp://127.0.0.1:29334"
+zmq_endpoint_sequence  = "tcp://127.0.0.1:29335"
+
+zmq_receive_timeout_ms = 1000
+zmq_reconnect_backoff_ms = 1000
+zmq_wakeup_debounce_ms = 250
+
+# ----------------------------------------------------------------------------
+# Mempool-driven SV2 template pushes (GBT remains authoritative every refresh)
+# ----------------------------------------------------------------------------
+
+# Absolute fee delta vs last broadcast template at the same chain tip before a
+# mempool-only update is pushed (ZATS; not a percentage).
+fee_threshold = 5000
+
+# Max non-coinbase GBT transaction count for fee-threshold-qualified mempool-only pushes.
+# Tip-change templates ignore this cap.
+max_template_transactions = 5000
+
+# ----------------------------------------------------------------------------
+# SV2 Template Distribution (Noise)
+# ----------------------------------------------------------------------------
+
+# Listen address for pool_sv2 / sv2-apps (external software; may be on another host).
+tp_listen_address = "0.0.0.0:19442"
+
+# !! FOR TESTING / DEVELOPMENT ONLY — well-known secp256k1 keypair (private key = 1).
+# Replace with a production keypair for real deployments.
+authority_public_key = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+authority_secret_key = "0000000000000000000000000000000000000000000000000000000000000001"
+
+# ----------------------------------------------------------------------------
+# Logging
+# ----------------------------------------------------------------------------
+
+# "" = stdout/stderr only. Non-empty = also append to file (parent dir must exist).
+log_file = ""

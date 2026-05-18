@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: azcoin-ledger-postgres
+    environment:
+      POSTGRES_DB: azcoin_ledger_dev
+      POSTGRES_USER: azledger
+      POSTGRES_PASSWORD: azledger_dev_password
+    ports:
+      - "5432:5432"
+    volumes:
+      - azcoin_ledger_postgres_data:/var/lib/postgresql/data
+
+volumes:
+  azcoin_ledger_postgres_data:
