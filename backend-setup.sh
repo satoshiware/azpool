@@ -166,7 +166,7 @@ download_and_verify "$PAYOUT_ENGINE_TARBALL_URL" "payout-engine.tar" "$PAYOUT_EN
 # ===================== SYSTEM UPDATE =====================
 log "=== System Update & Base Packages ==="
 apt-get update -qq
-apt-get install -y curl ufw wireguard wireguard-tools openssh-server python-is-python3
+apt-get install -y curl ufw wireguard wireguard-tools openssh-server python-is-python3 sudo
 apt-get full-upgrade -y
 apt-get autoremove -y
 apt-get autoclean -y
