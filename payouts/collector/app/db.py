@@ -27,6 +27,10 @@ class DatabaseError(RuntimeError):
     """Raised when collector database operations fail."""
 
 
+COLLECTOR_ADVISORY_LOCK_CLASS = 20260519
+COLLECTOR_ADVISORY_LOCK_ID = 3001
+
+
 @contextmanager
 def connect(database_url: str) -> Iterator[psycopg.Connection]:
     conn = psycopg.connect(database_url)
@@ -34,6 +38,26 @@ def connect(database_url: str) -> Iterator[psycopg.Connection]:
         yield conn
     finally:
         conn.close()
+
+
+def try_acquire_collector_lock(conn: psycopg.Connection) -> bool:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT pg_try_advisory_lock(%s, %s)",
+            (COLLECTOR_ADVISORY_LOCK_CLASS, COLLECTOR_ADVISORY_LOCK_ID),
+        )
+        row = cur.fetchone()
+        return bool(row[0]) if row is not None else False
+
+
+def release_collector_lock(conn: psycopg.Connection) -> bool:
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT pg_advisory_unlock(%s, %s)",
+            (COLLECTOR_ADVISORY_LOCK_CLASS, COLLECTOR_ADVISORY_LOCK_ID),
+        )
+        row = cur.fetchone()
+        return bool(row[0]) if row is not None else False
 
 
 def normalize_monitoring_base_url(monitoring_base_url: object | None) -> str | None:

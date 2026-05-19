@@ -174,6 +174,14 @@ psql "$DATABASE_URL" -c "\dt sc_*"
 
 ## Manual collector run
 
+The collector acquires a Postgres session advisory lock (`pg_try_advisory_lock(20260519, 3001)`) so only one run executes at a time. Overlapping timer and manual runs log `collector already running; skipping this run` and exit successfully without writing collector run rows.
+
+For manual testing, prefer stopping the timer first:
+
+```bash
+sudo systemctl stop azcoin-pool-collector.timer
+```
+
 ```bash
 cd /opt/azcoin-super/src/azpool
 set -a

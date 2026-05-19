@@ -23,6 +23,7 @@ The standalone template-provider repository migration established that support-n
 5. **Collector never moves money** — no wallet RPC, no payout batches, no transaction broadcast.
 6. **Monitoring counters are v0.1 telemetry**, not final immutable share events. Counter resets (service restart) are detected and skipped rather than producing negative deltas.
 7. **Future production** may patch `pool_sv2` to push immutable accepted-share events; this collector remains compatible as a polling baseline.
+8. **Single-run lock** — a Postgres session advisory lock prevents overlapping collector runs; skipped overlaps exit successfully without failed run rows.
 
 ## Identity mapping (v0.1)
 

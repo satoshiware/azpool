@@ -21,7 +21,9 @@ from payouts.collector.app.db import (
     finish_collector_run,
     insert_delta,
     insert_snapshot,
+    release_collector_lock,
     start_collector_run,
+    try_acquire_collector_lock,
 )
 from payouts.collector.app.identity import resolve_sc_node_id
 from payouts.collector.app.delta import SnapshotCounters, compute_delta, is_counter_reset
@@ -48,6 +50,15 @@ def _client_id(item: dict) -> int | None:
     return None
 
 
+def _empty_totals() -> dict[str, int]:
+    return {
+        "pools_checked": 0,
+        "snapshots_written": 0,
+        "deltas_written": 0,
+        "resets_detected": 0,
+    }
+
+
 def _finish_failed_run(
     database_url: str,
     run_id: int,
@@ -68,24 +79,33 @@ def _finish_failed_run(
         conn.commit()
 
 
+def _release_collector_lock_safe(conn) -> None:
+    try:
+        if not release_collector_lock(conn):
+            logger.warning("failed to release collector advisory lock")
+    except Exception:
+        logger.warning("error releasing collector advisory lock", exc_info=True)
+
+
 def collect_once(settings: CollectorSettings) -> dict[str, int]:
     observed_at = datetime.now(UTC)
-    totals = {
-        "pools_checked": 0,
-        "snapshots_written": 0,
-        "deltas_written": 0,
-        "resets_detected": 0,
-    }
+    totals = _empty_totals()
 
     with connect(settings.database_url) as conn:
-        db_pools = fetch_active_pool_instances(conn)
-        pool_instances = resolve_pool_instances(db_pools, settings.env_pool_instances)
+        if not try_acquire_collector_lock(conn):
+            logger.warning("collector already running; skipping this run")
+            return totals
 
-        run_id = start_collector_run(conn)
-        conn.commit()
-        identity_mappings = fetch_active_identity_mappings(conn)
-
+        lock_held = True
+        run_id: int | None = None
         try:
+            db_pools = fetch_active_pool_instances(conn)
+            pool_instances = resolve_pool_instances(db_pools, settings.env_pool_instances)
+
+            run_id = start_collector_run(conn)
+            conn.commit()
+            identity_mappings = fetch_active_identity_mappings(conn)
+
             for pool in pool_instances:
                 totals["pools_checked"] += 1
                 with conn.transaction():
@@ -195,8 +215,14 @@ def collect_once(settings: CollectorSettings) -> dict[str, int]:
             )
             conn.commit()
         except (PoolMonitoringError, Exception) as exc:
-            _finish_failed_run(settings.database_url, run_id, totals, str(exc))
+            if run_id is not None:
+                _finish_failed_run(settings.database_url, run_id, totals, str(exc))
+            else:
+                logger.error("collector failed before run row creation: %s", exc)
             raise
+        finally:
+            if lock_held:
+                _release_collector_lock_safe(conn)
 
     return totals
 
