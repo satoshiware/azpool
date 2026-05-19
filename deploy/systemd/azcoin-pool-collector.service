@@ -1,0 +1,17 @@
+[Unit]
+Description=AZCOIN Pool Telemetry Collector
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=azledger
+Group=azledger
+WorkingDirectory=/opt/azcoin-super/src/azpool
+EnvironmentFile=/etc/azcoin-super/pool-ledger/collector.env
+ExecStart=/opt/azcoin-super/src/azpool/.venv/bin/python -m payouts.collector.app.main
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/azcoin-super/pool-ledger /var/log/azcoin-super/pool-ledger
