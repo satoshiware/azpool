@@ -59,14 +59,14 @@ After migration `002_sc_node_identity_mapping.sql`:
 
 ```sql
 INSERT INTO sc_nodes (id, display_name, status, payout_enabled)
-VALUES ('sc-3', 'SC Node 3', 'active', false)
+VALUES ('sc-2', 'SC Node 2 / baveetstudy', 'active', false)
 ON CONFLICT (id) DO UPDATE
 SET display_name = EXCLUDED.display_name,
     status = EXCLUDED.status,
     updated_at = now();
 
 INSERT INTO sc_node_identity_mappings (sc_node_id, match_type, match_value, status)
-VALUES ('sc-3', 'prefix', 'baveetstudy.', 'active')
+VALUES ('sc-2', 'prefix', 'baveetstudy.', 'active')
 ON CONFLICT (match_type, match_value) DO UPDATE
 SET sc_node_id = EXCLUDED.sc_node_id,
     status = EXCLUDED.status;
