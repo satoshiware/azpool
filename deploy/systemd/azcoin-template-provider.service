@@ -1,0 +1,19 @@
+[Unit]
+Description=AZCOIN SV2 Template Provider
+After=network-online.target azcoind.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=azcoin-templar
+Group=azcoin-templar
+WorkingDirectory=/var/lib/azcoin-super/templar
+ExecStart=/opt/azcoin-super/bin/azcoin-template-provider --config /etc/azcoin-super/templar/azcoin-template-provider.toml
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/azcoin-super/templar /var/log/azcoin-super/templar /var/log/templar
+
+[Install]
+WantedBy=multi-user.target
