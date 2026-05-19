@@ -72,7 +72,7 @@ SET sc_node_id = EXCLUDED.sc_node_id,
     status = EXCLUDED.status;
 ```
 
-`payout_enabled` remains `false` for this temporary mapping. New collector runs map `baveetstudy.miner*` to `sc-3`; existing historical NULL rows stay NULL unless a separate explicit backfill is approved later.
+`payout_enabled` remains `false` for this temporary mapping. New collector runs map `baveetstudy.miner*` to `sc-2`; existing historical NULL rows stay NULL unless a separate explicit backfill is approved later.
 
 ### SC-node work summary (payout/credit grouping)
 
