@@ -9,7 +9,7 @@ if str(AZPOOL_ROOT) not in sys.path:
 
 import pytest
 
-from payouts.collector.app.identity import parse_sc_node_id
+from payouts.collector.app.identity import parse_sc_node_id, resolve_sc_node_id
 
 
 @pytest.mark.parametrize(
@@ -37,3 +37,4 @@ def test_parse_sc_node_id_mapped_identities(identity: str, expected: str) -> Non
 )
 def test_parse_sc_node_id_unknown_identities_stay_unmapped(identity: str) -> None:
     assert parse_sc_node_id(identity) is None
+    assert resolve_sc_node_id(identity, []) is None

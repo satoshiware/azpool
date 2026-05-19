@@ -41,7 +41,51 @@ Observed identities (v0.1 telemetry only, not payout mapping):
 - `baveetstudy.miner2`
 - `baveetstudy.miner3`
 
-These remain **unmapped** (`sc_node_id = NULL`) until an explicit mapping rule or table exists.
+These remain **unmapped** (`sc_node_id = NULL`) until an explicit mapping exists in `sc_node_identity_mappings`.
+
+**SC-node-first rules:**
+
+- Support node pays/credits **SC nodes**, not individual users/workers.
+- `user_identity` is collector/audit telemetry only — not a payout principal.
+- Payout/credit math groups by `sc_node_id` only; do not use `user_identity` in payout reports by default.
+- Unknown identities remain unmapped and unpaid.
+- SC node operators handle downstream worker/customer splits.
+- Native long-term identity should be `az/scnode/<sc_node_id>`.
+- Historical rows with `sc_node_id IS NULL` are not auto-backfilled in v0.1.
+
+### Temporary prefix mapping example (telemetry only)
+
+After migration `002_sc_node_identity_mapping.sql`:
+
+```sql
+INSERT INTO sc_nodes (id, display_name, status, payout_enabled)
+VALUES ('sc-3', 'SC Node 3', 'active', false)
+ON CONFLICT (id) DO UPDATE
+SET display_name = EXCLUDED.display_name,
+    status = EXCLUDED.status,
+    updated_at = now();
+
+INSERT INTO sc_node_identity_mappings (sc_node_id, match_type, match_value, status)
+VALUES ('sc-3', 'prefix', 'baveetstudy.', 'active')
+ON CONFLICT (match_type, match_value) DO UPDATE
+SET sc_node_id = EXCLUDED.sc_node_id,
+    status = EXCLUDED.status;
+```
+
+`payout_enabled` remains `false` for this temporary mapping. New collector runs map `baveetstudy.miner*` to `sc-3`; existing historical NULL rows stay NULL unless a separate explicit backfill is approved later.
+
+### SC-node work summary (payout/credit grouping)
+
+```sql
+SELECT
+  sc_node_id,
+  SUM(accepted_delta) AS accepted_delta_total,
+  SUM(work_delta) AS work_delta_total
+FROM pool_share_work_deltas
+WHERE sc_node_id IS NOT NULL
+GROUP BY sc_node_id
+ORDER BY work_delta_total DESC;
+```
 
 ## Configuration
 
@@ -62,12 +106,14 @@ From the azpool checkout on the support node:
 ```bash
 cd /opt/azcoin-super/src/azpool/payouts
 psql "$DATABASE_URL" -f migrations/001_pool_telemetry_collector.sql
+psql "$DATABASE_URL" -f migrations/002_sc_node_identity_mapping.sql
 ```
 
 Verify tables:
 
 ```bash
 psql "$DATABASE_URL" -c "\dt pool_*"
+psql "$DATABASE_URL" -c "\dt sc_*"
 ```
 
 ## Manual collector run
@@ -147,7 +193,7 @@ Monitoring counters may decrease after `pool_sv2` restart. The collector logs `c
 
 ### Identity unmapped
 
-`user_identity` values like `baveetstudy.miner1` are stored with `sc_node_id = NULL`. This is expected in v0.1. Future payout logic must not treat unmapped rows as payable SC-node identities until explicitly mapped.
+`user_identity` values like `baveetstudy.miner1` are stored with `sc_node_id = NULL` until mapped. This is expected in v0.1. Payout logic must group by `sc_node_id` only and must not treat unmapped rows as payable.
 
 Query recent unmapped deltas:
 

@@ -25,9 +25,18 @@ The standalone template-provider repository migration established that support-n
 
 ## Identity mapping (v0.1)
 
-- Store observed `user_identity` verbatim.
-- Derive `sc_node_id` only when a safe, documented parser rule matches (`az/scnode/<id>`, `scnode.<id>`, `scnode-<id>`).
-- Unknown identities (for example `baveetstudy.miner1`) remain **unmapped** (`sc_node_id = NULL`).
+- Store observed `user_identity` verbatim for collector/audit telemetry only.
+- **Support node pays/credits SC nodes, not individual users/workers.**
+- Payout/credit math groups by `sc_node_id` only; `user_identity` must not appear in payout reports by default.
+- Resolve `sc_node_id` in order:
+  1. Native format (`az/scnode/<id>`, then documented legacy aliases `scnode.<id>`, `scnode-<id>`)
+  2. Active rows in `sc_node_identity_mappings` (`exact` → longest `prefix` → deterministic `glob`)
+- Unknown or unmapped identities remain **unmapped** (`sc_node_id = NULL`) and **unpaid**.
+- `payout_enabled` on `sc_nodes` does not control telemetry mapping in v0.1.
+- Temporary prefix example: `baveetstudy.` → `sc-3` with `payout_enabled = false`.
+- Long-term native identity should be `az/scnode/<sc_node_id>`.
+- Historical delta rows with `sc_node_id IS NULL` are not backfilled automatically in v0.1; optional backfill is a separate deliberate operation.
+- SC node operators handle downstream worker/customer splits locally.
 
 ## Non-goals
 
@@ -38,5 +47,6 @@ The standalone template-provider repository migration established that support-n
 ## Consequences
 
 - Apply `payouts/migrations/001_pool_telemetry_collector.sql` before starting the collector.
+- Apply `payouts/migrations/002_sc_node_identity_mapping.sql` before using database identity mappings.
 - Configure `DATABASE_URL` and `POOL_INSTANCES` in `/etc/azcoin-super/pool-ledger/collector.env`.
 - Operate via `docs/runbooks/pool-monitoring-collector.md`.
