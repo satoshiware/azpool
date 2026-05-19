@@ -2,7 +2,34 @@
 
 Initial scaffold for reward collection and payout settlement service.
 
-## Quickstart
+## Pool telemetry collector (v0.1)
+
+The support node runs a **separate telemetry collector** under `payouts/collector/` that polls `pool_sv2` monitoring APIs, stores channel snapshots, and computes accepted-work deltas in Postgres.
+
+**Collector responsibilities:**
+
+- Poll `/api/v1/health`, `/api/v1/clients`, and `/api/v1/clients/{client_id}/channels` on each configured pool instance.
+- Store every observation in `pool_channel_snapshots`.
+- Insert `pool_share_work_deltas` when counters increase between observations.
+
+**Accepted-work formula (v0.1 telemetry):**
+
+```
+work_delta = current.share_work_sum - previous.share_work_sum
+accepted_delta = current.shares_accepted - previous.shares_accepted
+```
+
+**Non-goals (collector must never):**
+
+- Create payout credits, payout batches, or settlement rows.
+- Call AZCoin Core wallet RPC or broadcast transactions.
+- Treat monitoring counters as final immutable share events.
+
+A future payout/ledger service will read `pool_share_work_deltas` for settlement. Deploy via `deploy/systemd/azcoin-pool-collector.service` (one-shot) and `deploy/systemd/azcoin-pool-collector.timer` (30s interval). See `docs/runbooks/pool-monitoring-collector.md`.
+
+Migration: `payouts/migrations/001_pool_telemetry_collector.sql`
+
+---
 
 1. Create virtual environment:
    - `python3 -m venv .venv`
