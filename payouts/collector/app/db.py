@@ -7,9 +7,11 @@ from decimal import Decimal
 from typing import Iterator
 
 import psycopg
+from psycopg import errors as pg_errors
 
 from payouts.collector.app.config import PoolInstanceConfig
 from payouts.collector.app.delta import DeltaComputation, SnapshotCounters
+from payouts.collector.app.identity import IdentityMapping
 from payouts.collector.app.pool_client import NormalizedChannel
 
 
@@ -32,6 +34,33 @@ def connect(database_url: str) -> Iterator[psycopg.Connection]:
         yield conn
     finally:
         conn.close()
+
+
+def fetch_active_identity_mappings(conn: psycopg.Connection) -> list[IdentityMapping]:
+    """Load active identity mappings; return empty list if migration not applied yet."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, sc_node_id, match_type, match_value
+                FROM sc_node_identity_mappings
+                WHERE status = 'active'
+                ORDER BY id
+                """
+            )
+            rows = cur.fetchall()
+    except pg_errors.UndefinedTable:
+        return []
+
+    return [
+        IdentityMapping(
+            id=int(row[0]),
+            sc_node_id=str(row[1]),
+            match_type=str(row[2]),
+            match_value=str(row[3]),
+        )
+        for row in rows
+    ]
 
 
 def ensure_pool_instance(conn: psycopg.Connection, pool: PoolInstanceConfig) -> None:

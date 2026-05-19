@@ -24,10 +24,21 @@ accepted_delta = current.shares_accepted - previous.shares_accepted
 - Create payout credits, payout batches, or settlement rows.
 - Call AZCoin Core wallet RPC or broadcast transactions.
 - Treat monitoring counters as final immutable share events.
+- Treat `user_identity` as a payout principal (audit/telemetry only).
 
-A future payout/ledger service will read `pool_share_work_deltas` for settlement. Deploy via `deploy/systemd/azcoin-pool-collector.service` (one-shot) and `deploy/systemd/azcoin-pool-collector.timer` (30s interval). See `docs/runbooks/pool-monitoring-collector.md`.
+**SC-node-first grouping:**
 
-Migration: `payouts/migrations/001_pool_telemetry_collector.sql`
+- Support node pays/credits **SC nodes**, not individual pool workers/users.
+- Payout/credit math groups by `sc_node_id` only.
+- `user_identity` is collector/audit telemetry; it should not appear in payout reports by default.
+- Unknown identities remain unmapped and unpaid until explicitly mapped.
+- Native long-term identity: `az/scnode/<sc_node_id>`.
+- Temporary prefix mapping example: `baveetstudy.` → `sc-3` with `payout_enabled = false`.
+- Historical rows with `sc_node_id IS NULL` are not auto-backfilled in v0.1.
+
+A future payout/ledger service will read `pool_share_work_deltas` grouped by `sc_node_id`. Deploy via `deploy/systemd/azcoin-pool-collector.service` (one-shot) and `deploy/systemd/azcoin-pool-collector.timer` (30s interval). See `docs/runbooks/pool-monitoring-collector.md`.
+
+Migrations: `payouts/migrations/001_pool_telemetry_collector.sql`, `payouts/migrations/002_sc_node_identity_mapping.sql`
 
 ---
 

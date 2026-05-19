@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from payouts.collector.app.config import CollectorSettings, ConfigError, load_settings
@@ -9,12 +10,14 @@ from payouts.collector.app.db import (
     connect,
     counters_from_previous,
     ensure_pool_instance,
+    fetch_active_identity_mappings,
     fetch_previous_snapshot,
     finish_collector_run,
     insert_delta,
     insert_snapshot,
     start_collector_run,
 )
+from payouts.collector.app.identity import resolve_sc_node_id
 from payouts.collector.app.delta import SnapshotCounters, compute_delta, is_counter_reset
 from payouts.collector.app.pool_client import (
     PoolMonitoringError,
@@ -51,6 +54,7 @@ def collect_once(settings: CollectorSettings) -> dict[str, int]:
     with connect(settings.database_url) as conn:
         run_id = start_collector_run(conn)
         conn.commit()
+        identity_mappings = fetch_active_identity_mappings(conn)
 
         try:
             for pool in settings.pool_instances:
@@ -81,6 +85,13 @@ def collect_once(settings: CollectorSettings) -> dict[str, int]:
                         channels = normalize_channels(client_id, channels_payload)
 
                         for channel in channels:
+                            channel = replace(
+                                channel,
+                                sc_node_id=resolve_sc_node_id(
+                                    channel.user_identity,
+                                    identity_mappings,
+                                ),
+                            )
                             previous = fetch_previous_snapshot(
                                 conn,
                                 pool_instance_id=pool.id,
