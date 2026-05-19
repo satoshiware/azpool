@@ -59,20 +59,20 @@ After migration `002_sc_node_identity_mapping.sql`:
 
 ```sql
 INSERT INTO sc_nodes (id, display_name, status, payout_enabled)
-VALUES ('sc-2', 'SC Node 2 / baveetstudy', 'active', false)
+VALUES ('sc-3', 'SC Node 3', 'active', false)
 ON CONFLICT (id) DO UPDATE
 SET display_name = EXCLUDED.display_name,
     status = EXCLUDED.status,
     updated_at = now();
 
 INSERT INTO sc_node_identity_mappings (sc_node_id, match_type, match_value, status)
-VALUES ('sc-2', 'prefix', 'baveetstudy.', 'active')
+VALUES ('sc-3', 'prefix', 'baveetstudy.', 'active')
 ON CONFLICT (match_type, match_value) DO UPDATE
 SET sc_node_id = EXCLUDED.sc_node_id,
     status = EXCLUDED.status;
 ```
 
-`payout_enabled` remains `false` for this temporary mapping. New collector runs map `baveetstudy.miner*` to `sc-2`; existing historical NULL rows stay NULL unless a separate explicit backfill is approved later.
+`payout_enabled` remains `false` for this temporary mapping. New collector runs map `baveetstudy.miner*` to `sc-3`; existing historical NULL rows stay NULL unless a separate explicit backfill is approved later.
 
 ### SC-node work summary (payout/credit grouping)
 
@@ -87,13 +87,68 @@ GROUP BY sc_node_id
 ORDER BY work_delta_total DESC;
 ```
 
+## Pool instance registry (DB-backed)
+
+Pool monitoring targets are loaded from the **`pool_instances`** Postgres table on every one-shot collector run. No service restart is required when adding, updating, or disabling pools.
+
+Active pool criteria:
+
+- `status = 'active'`
+- `monitoring_enabled = true`
+- `monitoring_base_url` is non-empty
+
+The collector maps `monitoring_base_url` → internal `base_url` for HTTP polling only.
+
+**`DATABASE_URL`** remains required in `/etc/azcoin-super/pool-ledger/collector.env`.
+
+**`POOL_INSTANCES`** env JSON is a **temporary fallback only** when the DB registry is unavailable or returns zero active pools.
+
+### Add or update a pool
+
+```sql
+INSERT INTO pool_instances (id, display_name, monitoring_base_url, status, monitoring_enabled)
+VALUES ('pool03', 'Pool 03', 'http://10.10.70.99:9090', 'active', true)
+ON CONFLICT (id) DO UPDATE
+SET display_name = EXCLUDED.display_name,
+    monitoring_base_url = EXCLUDED.monitoring_base_url,
+    status = EXCLUDED.status,
+    monitoring_enabled = EXCLUDED.monitoring_enabled,
+    updated_at = now();
+```
+
+### Disable a pool
+
+```sql
+UPDATE pool_instances
+SET status = 'inactive',
+    monitoring_enabled = false,
+    updated_at = now()
+WHERE id = 'pool03';
+```
+
+### List pools
+
+```sql
+SELECT id, display_name, monitoring_base_url, status, monitoring_enabled, updated_at
+FROM pool_instances
+ORDER BY id;
+```
+
+Known production rows (examples — verify in DB):
+
+| id | monitoring_base_url |
+|----|---------------------|
+| pool01 | `http://10.10.70.131:9090` |
+| pool02 | `http://10.10.70.43:9090` |
+
 ## Configuration
 
 Create `/etc/azcoin-super/pool-ledger/collector.env` with placeholders only (no real credentials in Git):
 
 ```bash
 DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/DATABASE
-POOL_INSTANCES=[{"id":"pool01","base_url":"http://10.10.70.131:9090"},{"id":"pool02","base_url":"http://10.10.70.43:9090"}]
+# Optional fallback only — omit when pool_instances DB registry is populated:
+# POOL_INSTANCES=[{"id":"pool01","base_url":"http://10.10.70.131:9090"},{"id":"pool02","base_url":"http://10.10.70.43:9090"}]
 COLLECTOR_REQUEST_TIMEOUT_SECONDS=10
 ```
 
@@ -107,6 +162,7 @@ From the azpool checkout on the support node:
 cd /opt/azcoin-super/src/azpool/payouts
 psql "$DATABASE_URL" -f migrations/001_pool_telemetry_collector.sql
 psql "$DATABASE_URL" -f migrations/002_sc_node_identity_mapping.sql
+psql "$DATABASE_URL" -f migrations/003_pool_instance_registry.sql
 ```
 
 Verify tables:
