@@ -10,8 +10,8 @@ set -euo pipefail
 #          'satoshi' sudo user.
 #
 # Prerequisites (must be in the same directory as this script):
-#   • azpool-backend.env          ← Main configuration file (Carefully review/update)
-#   • azcoin-install.azpool.sh
+#   • backend-setup.env          ← Main configuration file (Carefully review/update)
+#   • azcoin-install.sh
 #   • templar-install.sh
 #   • payouts-install.azpool.sh
 #
@@ -28,7 +28,7 @@ set -euo pipefail
 # =============================================================================
 
 AZPOOL_BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENV_FILE="${AZPOOL_BASE_DIR}/azpool-backend.env"
+ENV_FILE="${AZPOOL_BASE_DIR}/backend-setup.env"
 LOG_FILE="/var/log/azpool-backend-setup.log"
 
 log() {
@@ -46,7 +46,7 @@ fi
 # ===================== LOAD ENVIRONMENT =====================
 if [[ ! -f "$ENV_FILE" ]]; then
     log "ERROR: Environment file not found: $ENV_FILE"
-    log "Please create azpool-backend.env in the same directory."
+    log "Please create backend-setup.env in the same directory."
     exit 1
 fi
 
@@ -116,17 +116,17 @@ log "✓ Python 3 detected"
 log "=== Verifying Required Installer Scripts ==="
 
 REQUIRED_SCRIPTS=(
-    "azcoin-install.azpool.sh"
-    "templar-install.sh"
-    "payouts-install.azpool.sh"
+    "${AZPOOL_BASE_DIR}/scripts/azcoin-install.sh"
+    "${AZPOOL_BASE_DIR}/scripts/templar-install.sh"
+    "${AZPOOL_BASE_DIR}/scripts/payouts-install.sh"
 )
 
 for script in "${REQUIRED_SCRIPTS[@]}"; do
-    if [[ ! -f "${AZPOOL_BASE_DIR}/${script}" ]]; then
+    if [[ ! -f "${script}" ]]; then
         log "ERROR: Required script not found: ${script}"
         exit 1
     else
-        chmod +x "${AZPOOL_BASE_DIR}/${script}"
+        chmod +x "${script}"
         log "✓ Found and made executable: ${script}"
     fi
 done
@@ -166,7 +166,7 @@ download_and_verify "$PAYOUT_ENGINE_TARBALL_URL" "payout-engine.tar" "$PAYOUT_EN
 # ===================== SYSTEM UPDATE =====================
 log "=== System Update & Base Packages ==="
 apt-get update -qq
-apt-get install -y curl ufw wireguard wireguard-tools openssh-server python-is-python3
+apt-get install -y curl ufw wireguard wireguard-tools openssh-server python-is-python3 sudo
 apt-get full-upgrade -y
 apt-get autoremove -y
 apt-get autoclean -y
@@ -180,7 +180,7 @@ log "Hostname set to: ${AZPOOL_HOSTNAME}"
 
 # ===================== STATIC IP (OPTIONAL) =====================
 log "=== Configuring Static IP (optional) ==="
-if [[ -n "${STATIC_IP}" ]]; then
+if [[ -n "${STATIC_IP:-}" ]]; then
     NETWORK_INTERFACE=$(ip route | grep default | awk '{print $5}' | head -n1)
     if [[ -z "${NETWORK_INTERFACE}" ]]; then
         log "WARNING: Could not detect network interface. Static IP not applied."
@@ -254,8 +254,8 @@ log "SSH hardened (root login fully disabled, password login disabled, FIDO2 sup
 
 # ===================== ROOT HARDENING =====================
 log "=== Hardening root account ==="
-usermod -s /usr/sbin/nologin root
-passwd -l root 2>/dev/null || true
+> /etc/securetty 2>/dev/null # Disable root login
+passwd -l root 2>/dev/null # Disable root passwd
 log "Root account fully disabled (nologin shell + locked password)."
 
 # ===================== UFW =====================
@@ -416,7 +416,7 @@ log "WireGuard client manager installed to /usr/local/bin/manage-wireguard-clien
 
 # ===================== COMPONENT INSTALLATION =====================
 log "=== Installing AZCoin Node ==="
-./azcoin-install.azpool.sh \
+${AZPOOL_BASE_DIR}/scripts/azcoin-install.sh \
     "${AZPOOL_BASE_DIR}/azcoin.tar" \
     "${AZCOIN_DBCACHE}" \
     "${AZCOIN_MAXMEMPOOL}" \
@@ -425,10 +425,10 @@ log "=== Installing AZCoin Node ==="
     "${AZCOIN_IP_UPDATER_CRON_ENABLE}"
 
 log "=== Installing Templar (SV2 Template Provider) ==="
-./templar-install.sh "${AZPOOL_BASE_DIR}/template-provider.tar" "${TEMPLATE_PROVIDER_PORT}"
+${AZPOOL_BASE_DIR}/scripts/templar-install.sh "${AZPOOL_BASE_DIR}/template-provider.tar" "${TEMPLATE_PROVIDER_PORT}"
 
 log "=== Installing Payouts Engine ==="
-./payouts-install.azpool.sh "${AZPOOL_BASE_DIR}/payout-engine.tar"
+${AZPOOL_BASE_DIR}/scripts/payouts-install.azpool.sh "${AZPOOL_BASE_DIR}/payout-engine.tar"
 
 # ===================== GENERATE README =====================
 log "=== Generating README (/home/satoshi/readme.txt) ==="

@@ -1,0 +1,23 @@
+*.db
+*.log
+log/
+logs/
+
+# Python bytecode and cache
+__pycache__/
+*.pyc
+
+# Test cache
+.pytest_cache/
+
+# Local virtual environment
+.venv/
+
+# Local environment files (keep example file tracked)
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+.pytest_cache/
+.env

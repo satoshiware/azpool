@@ -13,7 +13,7 @@ set -euo pipefail
 #   - The path to the azcoin-template-provider tarball MUST be passed as the first argument
 #
 # Usage:
-#   sudo ./install-azcoin-template-provider.sh /path/to/azcoin-template-provider-*.tar.gz
+#   sudo ./templar-install.sh /path/to/azcoin-template-provider-*.tar.gz
 #
 # What this script does:
 #   - Creates templar system user
@@ -23,7 +23,7 @@ set -euo pipefail
 #   - Starts the service automatically
 # =============================================================================
 
-LOG_FILE="/var/log/azcoin-template-provider-install.log"
+LOG_FILE="/var/log/template-install.log"
 
 log() {
     echo "$*" | tee -a "$LOG_FILE"
@@ -243,4 +243,5 @@ Useful Commands
 EOF
 
 log "Installation complete! Service started and enabled."
+log "translator-install log: ${LOG_FILE}"
 log "Readme: /usr/local/share/doc/templar.txt"
