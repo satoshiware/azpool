@@ -33,7 +33,7 @@ The standalone template-provider repository migration established that support-n
   2. Active rows in `sc_node_identity_mappings` (`exact` → longest `prefix` → deterministic `glob`)
 - Unknown or unmapped identities remain **unmapped** (`sc_node_id = NULL`) and **unpaid**.
 - `payout_enabled` on `sc_nodes` does not control telemetry mapping in v0.1.
-- Temporary prefix example: `baveetstudy.` → `sc-3` with `payout_enabled = false`.
+- Temporary prefix example: `baveetstudy.` → `sc-2` with `payout_enabled = false`.
 - Long-term native identity should be `az/scnode/<sc_node_id>`.
 - Historical delta rows with `sc_node_id IS NULL` are not backfilled automatically in v0.1; optional backfill is a separate deliberate operation.
 - SC node operators handle downstream worker/customer splits locally.
