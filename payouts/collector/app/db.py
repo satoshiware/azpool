@@ -36,6 +36,78 @@ def connect(database_url: str) -> Iterator[psycopg.Connection]:
         conn.close()
 
 
+def normalize_monitoring_base_url(monitoring_base_url: object | None) -> str | None:
+    if monitoring_base_url is None:
+        return None
+    trimmed = str(monitoring_base_url).strip().rstrip("/")
+    return trimmed or None
+
+
+def is_active_registry_pool(
+    *,
+    status: str,
+    monitoring_enabled: bool,
+    monitoring_base_url: object | None,
+) -> bool:
+    if status != "active" or not monitoring_enabled:
+        return False
+    return normalize_monitoring_base_url(monitoring_base_url) is not None
+
+
+def pool_instance_config_from_row(
+    pool_id: str,
+    display_name: object | None,
+    monitoring_base_url: object | None,
+    status: str,
+    monitoring_enabled: bool,
+) -> PoolInstanceConfig | None:
+    if not is_active_registry_pool(
+        status=status,
+        monitoring_enabled=monitoring_enabled,
+        monitoring_base_url=monitoring_base_url,
+    ):
+        return None
+
+    base_url = normalize_monitoring_base_url(monitoring_base_url)
+    if base_url is None:
+        return None
+
+    return PoolInstanceConfig(
+        id=pool_id,
+        base_url=base_url,
+        display_name=str(display_name or pool_id),
+    )
+
+
+def fetch_active_pool_instances(conn: psycopg.Connection) -> tuple[PoolInstanceConfig, ...] | None:
+    """Load active pool registry rows, or None if registry schema is unavailable."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, display_name, monitoring_base_url, status, monitoring_enabled
+                FROM pool_instances
+                ORDER BY id
+                """
+            )
+            rows = cur.fetchall()
+    except (pg_errors.UndefinedTable, pg_errors.UndefinedColumn):
+        return None
+
+    active: list[PoolInstanceConfig] = []
+    for row in rows:
+        config = pool_instance_config_from_row(
+            pool_id=str(row[0]),
+            display_name=row[1],
+            monitoring_base_url=row[2],
+            status=str(row[3]),
+            monitoring_enabled=bool(row[4]),
+        )
+        if config is not None:
+            active.append(config)
+    return tuple(active)
+
+
 def fetch_active_identity_mappings(conn: psycopg.Connection) -> list[IdentityMapping]:
     """Load active identity mappings; return empty list if migration not applied yet."""
     try:
@@ -65,17 +137,32 @@ def fetch_active_identity_mappings(conn: psycopg.Connection) -> list[IdentityMap
 
 def ensure_pool_instance(conn: psycopg.Connection, pool: PoolInstanceConfig) -> None:
     with conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO pool_instances (id, display_name, monitoring_base_url)
-            VALUES (%s, %s, %s)
-            ON CONFLICT (id) DO UPDATE
-            SET display_name = EXCLUDED.display_name,
-                monitoring_base_url = EXCLUDED.monitoring_base_url,
-                updated_at = now()
-            """,
-            (pool.id, pool.display_name or pool.id, pool.base_url),
-        )
+        try:
+            cur.execute(
+                """
+                INSERT INTO pool_instances (
+                  id, display_name, monitoring_base_url, status, monitoring_enabled
+                )
+                VALUES (%s, %s, %s, 'active', true)
+                ON CONFLICT (id) DO UPDATE
+                SET display_name = EXCLUDED.display_name,
+                    monitoring_base_url = EXCLUDED.monitoring_base_url,
+                    updated_at = now()
+                """,
+                (pool.id, pool.display_name or pool.id, pool.base_url),
+            )
+        except pg_errors.UndefinedColumn:
+            cur.execute(
+                """
+                INSERT INTO pool_instances (id, display_name, monitoring_base_url)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (id) DO UPDATE
+                SET display_name = EXCLUDED.display_name,
+                    monitoring_base_url = EXCLUDED.monitoring_base_url,
+                    updated_at = now()
+                """,
+                (pool.id, pool.display_name or pool.id, pool.base_url),
+            )
 
 
 def start_collector_run(conn: psycopg.Connection) -> int:

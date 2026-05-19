@@ -5,12 +5,18 @@ import sys
 from dataclasses import replace
 from datetime import UTC, datetime
 
-from payouts.collector.app.config import CollectorSettings, ConfigError, load_settings
+from payouts.collector.app.config import (
+    CollectorSettings,
+    ConfigError,
+    load_settings,
+    resolve_pool_instances,
+)
 from payouts.collector.app.db import (
     connect,
     counters_from_previous,
     ensure_pool_instance,
     fetch_active_identity_mappings,
+    fetch_active_pool_instances,
     fetch_previous_snapshot,
     finish_collector_run,
     insert_delta,
@@ -42,6 +48,26 @@ def _client_id(item: dict) -> int | None:
     return None
 
 
+def _finish_failed_run(
+    database_url: str,
+    run_id: int,
+    totals: dict[str, int],
+    error_message: str,
+) -> None:
+    with connect(database_url) as conn:
+        finish_collector_run(
+            conn,
+            run_id,
+            status="failed",
+            pools_checked=totals["pools_checked"],
+            snapshots_written=totals["snapshots_written"],
+            deltas_written=totals["deltas_written"],
+            resets_detected=totals["resets_detected"],
+            error_message=error_message,
+        )
+        conn.commit()
+
+
 def collect_once(settings: CollectorSettings) -> dict[str, int]:
     observed_at = datetime.now(UTC)
     totals = {
@@ -52,12 +78,15 @@ def collect_once(settings: CollectorSettings) -> dict[str, int]:
     }
 
     with connect(settings.database_url) as conn:
+        db_pools = fetch_active_pool_instances(conn)
+        pool_instances = resolve_pool_instances(db_pools, settings.env_pool_instances)
+
         run_id = start_collector_run(conn)
         conn.commit()
         identity_mappings = fetch_active_identity_mappings(conn)
 
         try:
-            for pool in settings.pool_instances:
+            for pool in pool_instances:
                 totals["pools_checked"] += 1
                 with conn.transaction():
                     ensure_pool_instance(conn, pool)
@@ -166,18 +195,7 @@ def collect_once(settings: CollectorSettings) -> dict[str, int]:
             )
             conn.commit()
         except (PoolMonitoringError, Exception) as exc:
-            conn.rollback()
-            with conn.transaction():
-                finish_collector_run(
-                    conn,
-                    run_id,
-                    status="failed",
-                    pools_checked=totals["pools_checked"],
-                    snapshots_written=totals["snapshots_written"],
-                    deltas_written=totals["deltas_written"],
-                    resets_detected=totals["resets_detected"],
-                    error_message=str(exc),
-                )
+            _finish_failed_run(settings.database_url, run_id, totals, str(exc))
             raise
 
     return totals
@@ -199,6 +217,9 @@ def main() -> int:
         totals = collect_once(settings)
     except PoolMonitoringError as exc:
         logger.error("pool monitoring error: %s", exc)
+        return 1
+    except ConfigError as exc:
+        logger.error("configuration error: %s", exc)
         return 1
     except Exception:
         logger.exception("collector run failed")

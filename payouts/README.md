@@ -33,12 +33,19 @@ accepted_delta = current.shares_accepted - previous.shares_accepted
 - `user_identity` is collector/audit telemetry; it should not appear in payout reports by default.
 - Unknown identities remain unmapped and unpaid until explicitly mapped.
 - Native long-term identity: `az/scnode/<sc_node_id>`.
-- Temporary prefix mapping example: `baveetstudy.` → `sc-2` with `payout_enabled = false`.
+- Temporary prefix mapping example: `baveetstudy.` → `sc-3` with `payout_enabled = false`.
 - Historical rows with `sc_node_id IS NULL` are not auto-backfilled in v0.1.
+
+**Pool instance registry (DB-backed):**
+
+- Active pool targets load from `pool_instances.monitoring_base_url` each timer run.
+- `DATABASE_URL` remains required in collector.env.
+- `POOL_INSTANCES` env JSON is temporary fallback only when DB registry is empty/unavailable.
+- Disable a pool with `status='inactive'` or `monitoring_enabled=false` — no service restart needed.
 
 A future payout/ledger service will read `pool_share_work_deltas` grouped by `sc_node_id`. Deploy via `deploy/systemd/azcoin-pool-collector.service` (one-shot) and `deploy/systemd/azcoin-pool-collector.timer` (30s interval). See `docs/runbooks/pool-monitoring-collector.md`.
 
-Migrations: `payouts/migrations/001_pool_telemetry_collector.sql`, `payouts/migrations/002_sc_node_identity_mapping.sql`
+Migrations: `payouts/migrations/001_pool_telemetry_collector.sql`, `payouts/migrations/002_sc_node_identity_mapping.sql`, `payouts/migrations/003_pool_instance_registry.sql`
 
 ---
 

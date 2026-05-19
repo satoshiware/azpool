@@ -13,8 +13,9 @@ The standalone template-provider repository migration established that support-n
 ## Decision
 
 1. **Support node owns pool telemetry ingestion** via `payouts/collector/` (systemd: `azcoin-pool-collector.service`).
-2. **Pool instances expose monitoring APIs** reachable from the support node (for example `http://10.10.70.131:9090`, `http://10.10.70.43:9090`).
-3. **Collector stores snapshots and deltas** in Postgres tables:
+2. **Pool instances are DB-backed** via `pool_instances` (`monitoring_base_url`). The collector loads the active registry every one-shot timer run; `POOL_INSTANCES` env JSON is fallback only.
+3. **Pool instances expose monitoring APIs** reachable from the support node over WireGuard.
+4. **Collector stores snapshots and deltas** in Postgres tables:
    - `pool_channel_snapshots`
    - `pool_share_work_deltas`
    - `pool_collector_runs`
@@ -33,7 +34,7 @@ The standalone template-provider repository migration established that support-n
   2. Active rows in `sc_node_identity_mappings` (`exact` → longest `prefix` → deterministic `glob`)
 - Unknown or unmapped identities remain **unmapped** (`sc_node_id = NULL`) and **unpaid**.
 - `payout_enabled` on `sc_nodes` does not control telemetry mapping in v0.1.
-- Temporary prefix example: `baveetstudy.` → `sc-2` with `payout_enabled = false`.
+- Temporary prefix example: `baveetstudy.` → `sc-3` with `payout_enabled = false`.
 - Long-term native identity should be `az/scnode/<sc_node_id>`.
 - Historical delta rows with `sc_node_id IS NULL` are not backfilled automatically in v0.1; optional backfill is a separate deliberate operation.
 - SC node operators handle downstream worker/customer splits locally.
@@ -48,5 +49,6 @@ The standalone template-provider repository migration established that support-n
 
 - Apply `payouts/migrations/001_pool_telemetry_collector.sql` before starting the collector.
 - Apply `payouts/migrations/002_sc_node_identity_mapping.sql` before using database identity mappings.
-- Configure `DATABASE_URL` and `POOL_INSTANCES` in `/etc/azcoin-super/pool-ledger/collector.env`.
+- Apply `payouts/migrations/003_pool_instance_registry.sql` before using DB-backed pool instance registry.
+- Configure `DATABASE_URL` in `/etc/azcoin-super/pool-ledger/collector.env`. `POOL_INSTANCES` is optional fallback only.
 - Operate via `docs/runbooks/pool-monitoring-collector.md`.
