@@ -84,7 +84,17 @@ It is custom-built for this AZCoin pool.
 - SV2 Template Provider ---> SV2 Pool - TDP push new/updated block templates
 - SV2 Pool ---> SV2 Template Provider - TDP submit block solution
 
-Repository Location: `sc-node/azpool/templar/`
+Repository Location: `templar/` (canonical source in this repository)
+
+Support-node build and install:
+
+- Build: `deploy/scripts/build-support-node.sh`
+- Install: `deploy/scripts/install-support-node.sh`
+- Runbooks: `docs/runbooks/template-provider-build-install.md`, `docs/runbooks/template-provider-repo-migration.md`
+- ADR: `docs/adr/ADR-azpool-templar-canonical-source.md`
+
+Installed binary (support node): `/opt/azcoin-super/bin/azcoin-template-provider`
+
 Binrary Location: [sc-node releases](https://github.com/satoshiware/sc-node/releases)
 
 # AZPool Backend Installation !!!!!!!!!!!!!! (TODO: REVISIT LATER AFTER RELEASE, INSTALLATION, FINISH TEMPLAR AND PAYOUTS, ETC. - MAKE MORE THOROUGH)
