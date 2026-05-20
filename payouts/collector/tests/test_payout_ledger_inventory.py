@@ -69,6 +69,7 @@ def test_quarantined_legacy_scripts_classify_legacy_candidate() -> None:
 
 def test_legacy_readme_classifies_do_not_remove_yet() -> None:
     assert inventory.suggest_classification("payouts/legacy/README.md") == "DO-NOT-REMOVE-YET"
+    assert inventory.suggest_classification("payouts/app/README.md") == "DO-NOT-REMOVE-YET"
 
 
 def test_scan_roots_include_payouts_legacy() -> None:

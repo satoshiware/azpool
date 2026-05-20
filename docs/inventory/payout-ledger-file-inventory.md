@@ -1,10 +1,10 @@
 # Payout ledger file inventory
 
-**Branch:** `feature/payout-ledger-legacy-quarantine-plan-v0` (PR E quarantine updates)
-**Purpose:** Classify `payouts/` and related docs for safe legacy cleanup. **No deletions** — standalone legacy scripts quarantined under `payouts/legacy/scripts/` (PR E).
+**Branch:** `feature/payout-app-dependency-audit-v0` (PR F audit updates)
+**Purpose:** Classify `payouts/` and related docs for safe legacy cleanup. Standalone scripts quarantined under `payouts/legacy/scripts/` (PR E). **`payouts/app/*` audited and marked legacy-candidate but not quarantined** (PR F) — see [payout-app-dependency-audit.md](payout-app-dependency-audit.md).
 
 Related: [ADR-pool-ledger-legacy-cleanup-plan.md](../adr/ADR-pool-ledger-legacy-cleanup-plan.md)  
-Helper script: `payouts/scripts/inventory_payout_ledger_files.py` (read-only JSON scan)
+Helper scripts: `payouts/scripts/inventory_payout_ledger_files.py`, `payouts/scripts/audit_payout_app_dependencies.py` (read-only JSON)
 
 ## Executive summary
 
@@ -51,7 +51,9 @@ Columns: **Path** | **Classification** | **Reason** | **Evidence** | **Proposed 
 
 | Path | Classification | Reason | Evidence | Proposed action | Removal risk | Next verification |
 |------|----------------|--------|----------|-----------------|--------------|-------------------|
-| `payouts/app/main.py` | LEGACY-CANDIDATE | FastAPI payout service entry | README `uvicorn app.main:app`; not in collector systemd | Quarantine in PR F after import grep | High | `rg payouts.app` / deploy refs |
+| `payouts/app/*` | LEGACY-CANDIDATE | Legacy FastAPI user-level payout service | PR F audit: no collector/deploy refs; heavy `payouts/tests` imports | **Not quarantined** — see [payout-app-dependency-audit.md](payout-app-dependency-audit.md) | **Critical** | PR G+ SC-node design |
+| `payouts/app/README.md` | DO-NOT-REMOVE-YET | Legacy boundary marker (PR F) | Documents do-not-run rules | Keep until app quarantined | Low | Ops review |
+| `payouts/app/main.py` | LEGACY-CANDIDATE | FastAPI payout service entry | README `uvicorn app.main:app`; not in collector systemd | Quarantine blocked until PR F audit reviewed | High | `audit_payout_app_dependencies.py` |
 | `payouts/app/settlement.py` | LEGACY-CANDIDATE | User-level settlement | Keywords: settlement, payout | Remove with main.py path | High | Settlement tests audit |
 | `payouts/app/postgres_settlement.py` | LEGACY-CANDIDATE | Postgres settlement | Keywords: settlement, payout | Remove with SC-node design | High | Shadow compare deps |
 | `payouts/app/sender.py` | LEGACY-CANDIDATE | Wallet send path | Keywords: sender, wallet | Remove after cutover proof | **Critical** | Wallet RPC grep |
@@ -95,7 +97,7 @@ Columns: **Path** | **Classification** | **Reason** | **Evidence** | **Proposed 
 |------|----------------|--------|----------|-----------------|--------------|-------------------|
 | `payouts/README.md` | UNKNOWN | Mixed legacy + collector docs | References uvicorn + demo scripts | Split or trim in PR E | Low | Doc review |
 | `payouts/scripts/check_candidate_blocks.sh` | UNKNOWN | Ops shell helper | Not collector; not settlement demo | Classify with translator ops | Medium | Runbook reference |
-| `payouts/scripts/run_translator_sv1_capture_proxy.py` | UNKNOWN | Translator proxy runner | translator tests | Keep until translator ADR | Medium | Import grep |
+| `payouts/scripts/run_translator_sv1_capture_proxy.py` | DO-NOT-REMOVE-YET | Translator proxy runner | **Active import** of `app.postgres_db`, `app.postgres_repositories`, `app.translator_sv1_capture_proxy` — blocks `payouts/app` quarantine | Keep until translator ownership decided | Medium | See [payout-app-dependency-audit.md](payout-app-dependency-audit.md) |
 | `payouts/docs/*.md` | UNKNOWN | Legacy postgres/translator plans | Historical design | Archive or link from ADR | Low | Stale date check |
 | `payouts/plan/*.md` | UNKNOWN | Phase deployment notes | PHASE7, SC2 preflight | Archive when phases close | Low | Owner review |
 | `payouts/requirements.txt` | UNKNOWN | Shared deps for app + collector | Both trees install | Pin split requirements later | Medium | pip compile diff |
@@ -150,8 +152,11 @@ PYTHONPATH=/opt/azcoin-super/src/azpool .venv/bin/python -m pytest payouts/colle
 |----|--------|----------------|
 | **PR D** (`feature/payout-ledger-legacy-inventory-v0`) | Inventory matrix + script + ADR link | **No** |
 | **PR E** (`feature/payout-ledger-legacy-quarantine-plan-v0`) | Quarantine standalone legacy scripts → `payouts/legacy/scripts/` | **No** (git mv only) |
-| **PR F** | Verify runtime/API dependencies for `payouts/app/*` | Maybe isolate app |
-| **PR G** | Design SC-node-level payout-credit ledger | **No** |
-| **PR H** | Guarded SC-node-level payout preparation; no wallet execution unless separately approved | TBD |
+| **PR F** (`feature/payout-app-dependency-audit-v0`) | `payouts/app` dependency audit + boundary README — no moves | **No** |
+| **PR G** | SC-node payout address registry spec/schema | **No** |
+| **PR H** | Read-only support-wallet reward listener | **No** |
+| **PR I** | SC-node credit ledger (no wallet sends) | **No** |
+| **PR J** | Payout plan generator (no wallet sends) | **No** |
+| **PR K** | Guarded dry-run wallet payout execution (separate approval) | TBD |
 
-**PR E** moved three scripts only. **`payouts/app/*` untouched** pending PR F runtime dependency review.
+**PR E** moved three scripts. **PR F** audited `payouts/app/*` — **not quarantined** until PR G–I and runtime verification. Removal/quarantine blocked until audit findings reviewed and SC-node replacement design exists.
