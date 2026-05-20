@@ -5,6 +5,8 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Mapping
 
+from payouts.collector.app import payout_addresses
+
 MIN_UNMAPPED_LIMIT = 1
 MAX_UNMAPPED_LIMIT = 500
 DEFAULT_UNMAPPED_LIMIT = 20
@@ -98,6 +100,14 @@ LIMIT {safe_limit}
 """.strip()
     assert_readonly_sql(sql)
     return sql
+
+
+def build_payout_addresses_sql() -> str:
+    return payout_addresses.build_sc_node_payout_addresses_sql(include_inactive=True)
+
+
+def row_to_payout_address_dict(row: Mapping[str, Any]) -> dict[str, Any]:
+    return payout_addresses.row_to_payout_address_dict(row)
 
 
 def _serialize_datetime(value: datetime | None) -> str | None:

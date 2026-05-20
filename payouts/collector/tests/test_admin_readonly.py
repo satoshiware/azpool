@@ -58,6 +58,22 @@ def test_mappings_sql_joins_sc_nodes() -> None:
     admin_readonly.assert_readonly_sql(sql)
 
 
+def test_payout_addresses_sql_joins_sc_nodes() -> None:
+    sql = admin_readonly.build_payout_addresses_sql()
+    assert "sc_node_payout_addresses" in sql
+    assert "LEFT JOIN sc_nodes" in sql
+    admin_readonly.assert_readonly_sql(sql)
+
+
+def test_admin_command_map_includes_payout_addresses() -> None:
+    from payouts.scripts import pool_ledger_admin_readonly as admin_cli
+
+    assert "payout-addresses" in admin_cli._COMMANDS
+    build_sql, row_fn = admin_cli._COMMANDS["payout-addresses"]
+    assert build_sql() == admin_readonly.build_payout_addresses_sql()
+    assert row_fn is admin_readonly.row_to_payout_address_dict
+
+
 def test_unmapped_identities_sql_filters_null_sc_node_id() -> None:
     sql = admin_readonly.build_unmapped_identities_sql(limit=20)
     assert "sc_node_id IS NULL" in sql

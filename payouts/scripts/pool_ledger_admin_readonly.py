@@ -27,6 +27,10 @@ _COMMANDS: dict[str, tuple[str, object]] = {
         admin_readonly.build_identity_mappings_sql,
         admin_readonly.row_to_identity_mapping_dict,
     ),
+    "payout-addresses": (
+        admin_readonly.build_payout_addresses_sql,
+        admin_readonly.row_to_payout_address_dict,
+    ),
 }
 
 
@@ -34,7 +38,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Read-only pool-ledger admin queries")
     parser.add_argument(
         "command",
-        choices=["pool-instances", "sc-nodes", "mappings", "unmapped-identities"],
+        choices=["pool-instances", "sc-nodes", "mappings", "payout-addresses", "unmapped-identities"],
     )
     parser.add_argument(
         "--limit",

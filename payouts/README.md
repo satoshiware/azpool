@@ -54,7 +54,9 @@ A future payout/ledger service will read `pool_share_work_deltas` grouped by `sc
 
 **Legacy app boundary (PR F):** `payouts/app/` is legacy-candidate FastAPI user-level payout/settlement code — **not quarantined**. Documented in `payouts/app/README.md` and [payout-app-dependency-audit.md](../docs/inventory/payout-app-dependency-audit.md). Active support-node scripts remain under `payouts/scripts/`.
 
-Migrations: `payouts/migrations/001_pool_telemetry_collector.sql`, `payouts/migrations/002_sc_node_identity_mapping.sql`, `payouts/migrations/003_pool_instance_registry.sql`
+**SC-node payout address registry (PR G):** Migration `004_sc_node_payout_addresses.sql` adds `sc_node_payout_addresses` for per-SC-node payout destinations. Read-only admin command: `pool_ledger_admin_readonly.py payout-addresses`. **Payout execution is not implemented** — no wallet RPC, no coin sends. See [sc-node-payout-addresses.md](../docs/runbooks/sc-node-payout-addresses.md).
+
+Migrations: `payouts/migrations/001_pool_telemetry_collector.sql`, `payouts/migrations/002_sc_node_identity_mapping.sql`, `payouts/migrations/003_pool_instance_registry.sql`, `payouts/migrations/004_sc_node_payout_addresses.sql`
 
 ---
 

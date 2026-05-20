@@ -11,6 +11,7 @@ Operators and `azledger` need safe JSON views of:
 - Which pool instances are registered for monitoring
 - Which SC nodes exist and whether payout is enabled
 - How `user_identity` values map to `sc_node_id`
+- Registered SC-node payout addresses (registry only — not execution)
 - Which identities still have unmapped telemetry deltas (unpaid)
 
 Architecture reminder:
@@ -25,8 +26,9 @@ Architecture reminder:
 | Allowed | Not allowed (this tooling) |
 |---------|----------------------------|
 | `SELECT` via read-only psycopg connection | `INSERT` / `UPDATE` / `DELETE` / DDL |
-| JSON to stdout | Wallet RPC, broadcast, payout addresses |
+| JSON to stdout | Wallet RPC, broadcast, transaction creation |
 | `unmapped-identities` shows `user_identity` for mapping work | Default payout reports exposing `user_identity` |
+| `payout-addresses` lists registry rows | Sending coins or proving on-chain ownership |
 
 **Strong warning:** These commands are admin visibility only. They do **not** move money, create payout batches, or invoke AZCoin Core wallet RPC.
 
@@ -49,6 +51,7 @@ set +a
 PYTHONPATH=/opt/azcoin-super/src/azpool .venv/bin/python payouts/scripts/pool_ledger_admin_readonly.py pool-instances
 PYTHONPATH=/opt/azcoin-super/src/azpool .venv/bin/python payouts/scripts/pool_ledger_admin_readonly.py sc-nodes
 PYTHONPATH=/opt/azcoin-super/src/azpool .venv/bin/python payouts/scripts/pool_ledger_admin_readonly.py mappings
+PYTHONPATH=/opt/azcoin-super/src/azpool .venv/bin/python payouts/scripts/pool_ledger_admin_readonly.py payout-addresses
 PYTHONPATH=/opt/azcoin-super/src/azpool .venv/bin/python payouts/scripts/pool_ledger_admin_readonly.py unmapped-identities --limit 50
 ```
 
@@ -103,6 +106,31 @@ PYTHONPATH=/opt/azcoin-super/src/azpool .venv/bin/python payouts/scripts/pool_le
       "match_value": "baveetstudy.",
       "status": "active",
       "created_at": "2026-05-19T12:00:00+00:00"
+    }
+  ]
+}
+```
+
+### Example: payout-addresses
+
+Registry visibility only — **does not send coins** or call wallet RPC. See [sc-node-payout-addresses.md](sc-node-payout-addresses.md).
+
+```json
+{
+  "command": "payout-addresses",
+  "rows": [
+    {
+      "id": 1,
+      "sc_node_id": "sc-2",
+      "sc_node_display_name": "SC Node 2",
+      "payout_address": "<SC2_PAYOUT_ADDRESS_PLACEHOLDER>",
+      "label": "SC Node 2 primary (pending verification)",
+      "address_source": "manual",
+      "status": "pending_verification",
+      "is_default": false,
+      "verified_at": null,
+      "created_at": "2026-05-19T12:00:00+00:00",
+      "updated_at": "2026-05-19T12:00:00+00:00"
     }
   ]
 }
