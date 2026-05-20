@@ -52,6 +52,8 @@ A future payout/ledger service will read `pool_share_work_deltas` grouped by `sc
 
 **Legacy quarantine (PR E):** User-level payout demo and backfill scripts live under `payouts/legacy/scripts/` (not `payouts/scripts/`). They are preserved for audit only — not part of support-node SC-node telemetry/admin. See `payouts/legacy/README.md`.
 
+**Legacy app boundary (PR F):** `payouts/app/` is legacy-candidate FastAPI user-level payout/settlement code — **not quarantined**. Documented in `payouts/app/README.md` and [payout-app-dependency-audit.md](../docs/inventory/payout-app-dependency-audit.md). Active support-node scripts remain under `payouts/scripts/`.
+
 Migrations: `payouts/migrations/001_pool_telemetry_collector.sql`, `payouts/migrations/002_sc_node_identity_mapping.sql`, `payouts/migrations/003_pool_instance_registry.sql`
 
 ---

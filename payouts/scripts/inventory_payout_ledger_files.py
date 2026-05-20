@@ -32,6 +32,7 @@ _ACTIVE_EXACT = frozenset(
         "payouts/scripts/sc_node_work_summary.py",
         "payouts/scripts/pool_ledger_admin_readonly.py",
         "payouts/scripts/inventory_payout_ledger_files.py",
+        "payouts/scripts/audit_payout_app_dependencies.py",
         "payouts/migrations/001_pool_telemetry_collector.sql",
         "payouts/migrations/002_sc_node_identity_mapping.sql",
         "payouts/migrations/003_pool_instance_registry.sql",
@@ -40,6 +41,7 @@ _ACTIVE_EXACT = frozenset(
         "docs/adr/ADR-support-node-pool-telemetry-collector.md",
         "docs/adr/ADR-pool-ledger-legacy-cleanup-plan.md",
         "docs/inventory/payout-ledger-file-inventory.md",
+        "docs/inventory/payout-app-dependency-audit.md",
     }
 )
 
@@ -67,6 +69,7 @@ _DO_NOT_REMOVE_EXACT = frozenset(
         "payouts/alembic.ini",
         "payouts/alembic/env.py",
         "payouts/legacy/README.md",
+        "payouts/app/README.md",
     }
 )
 
@@ -97,13 +100,13 @@ def suggest_classification(path: str) -> str:
     for prefix in _ACTIVE_PREFIXES:
         if normalized.startswith(prefix):
             return "ACTIVE"
+    if normalized in _DO_NOT_REMOVE_EXACT:
+        return "DO-NOT-REMOVE-YET"
     for prefix in _LEGACY_PREFIXES:
         if normalized.startswith(prefix):
             return "LEGACY-CANDIDATE"
     if normalized.startswith(_LEGACY_TEST_PREFIX):
         return "LEGACY-CANDIDATE"
-    if normalized in _DO_NOT_REMOVE_EXACT:
-        return "DO-NOT-REMOVE-YET"
     for prefix in _DO_NOT_REMOVE_PREFIXES:
         if normalized.startswith(prefix):
             return "DO-NOT-REMOVE-YET"

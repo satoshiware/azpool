@@ -12,6 +12,8 @@
 
 **PR E (`feature/payout-ledger-legacy-quarantine-plan-v0`)** quarantines standalone legacy scripts under `payouts/legacy/scripts/` via `git mv` only — **no deletion**, no change to active collector/admin/reporting behavior.
 
+**PR F (`feature/payout-app-dependency-audit-v0`)** audits `payouts/app/*` dependencies, adds `payouts/app/README.md` boundary markers, and **does not move or delete** app code.
+
 **Future payouts** will be **SC-node-level** (`sc_node_id` → SC node wallet), not worker/user-level (`user_identity`). The support node does not pay individual pool workers; splits happen below the SC node.
 
 **Historical telemetry** with `sc_node_id IS NULL` remains **unpaid** unless a separate, explicitly approved backfill is executed. Inventory and cleanup PRs do not perform backfill.
@@ -46,15 +48,38 @@ Standalone legacy scripts with **no** active `deploy/` or systemd references wer
 - **`payouts/app/*` remains untouched** pending a separate runtime/API dependency review (PR F).
 - `payouts/tests/test_postgres_shadow_backfill.py` updated in PR E to load the script from `payouts/legacy/scripts/backfill_postgres_shadow.py`.
 
-Preflight: grep across `deploy/`, `docs/runbooks`, and collector paths found **no** production references to the old `payouts/scripts/` paths for these three files. References remain in `payouts/README.md` (updated to `legacy/scripts/`) and legacy `payouts/tests/`.
+Preflight: grep across `deploy/`, `docs/runbooks`, and collector paths found **no** production references to the old `payouts/scripts/` paths for these three files. References remain in `payouts/README.md` (updated to `legacy/scripts/`) and legacy `payouts/tests/` (backfill path fixed in PR E).
 
-## Inventory artifact (PR D / PR E)
+## PR F dependency audit decision
+
+`payouts/app/` remains **in place**. PR F adds:
+
+- [payout-app-dependency-audit.md](../inventory/payout-app-dependency-audit.md) — static/runtime/test dependency findings
+- `payouts/app/README.md` — legacy-candidate boundary warning
+- `payouts/scripts/audit_payout_app_dependencies.py` — read-only JSON audit helper
+
+**No runtime behavior changed. No files moved.**
+
+Findings:
+
+- `payouts/app` is **not** imported by the collector or support-node systemd units.
+- `payouts/app` **is** heavily imported by `payouts/tests/*`, quarantined legacy scripts, and **`payouts/scripts/run_translator_sv1_capture_proxy.py`** (active non-legacy script importing Postgres/translator modules).
+- Audit inbound counts **exclude** generated/cache files (`__pycache__/`, `.pytest_cache/`, `.pyc`, `.pyo`, `.so`, `.git/`, `.venv/`).
+- **Do not quarantine** `payouts/app` until replacement SC-node payout-credit design (PR G–I), translator runtime ownership is decided, and production verification complete.
+
+**Next architectural step:** SC-node payout address registry (PR G) and read-only support-wallet reward listener (PR H). Future removal/quarantine requires replacement SC-node ledger and verified no production dependency.
+
+## Inventory artifact (PR D / PR E / PR F)
 
 | Artifact | Purpose |
 |----------|---------|
 | [docs/inventory/payout-ledger-file-inventory.md](../inventory/payout-ledger-file-inventory.md) | Human-readable matrix: classification, evidence, proposed action, risk |
+| [docs/inventory/payout-app-dependency-audit.md](../inventory/payout-app-dependency-audit.md) | PR F `payouts/app` dependency audit |
+| `payouts/scripts/audit_payout_app_dependencies.py` | Read-only JSON audit of `payouts/app` inbound refs |
+| `payouts/app/README.md` | Legacy boundary marker (PR F) |
 | `payouts/scripts/inventory_payout_ledger_files.py` | Read-only JSON scan (paths, keywords, suggested classification) |
-| `payouts/collector/tests/test_payout_ledger_inventory.py` | Unit tests for classification rules and script output shape |
+| `payouts/collector/tests/test_payout_ledger_inventory.py` | Unit tests for inventory classification rules |
+| `payouts/collector/tests/test_payout_app_dependency_audit.py` | Unit tests for app dependency audit script |
 
 Classifications are only: **ACTIVE**, **LEGACY-CANDIDATE**, **UNKNOWN**, **DO-NOT-REMOVE-YET**.
 
@@ -127,6 +152,9 @@ See the full matrix in [payout-ledger-file-inventory.md](../inventory/payout-led
 |----|--------|
 | **PR D** | Inventory only (matrix + script) — **no deletion** |
 | **PR E** | Quarantine standalone legacy scripts → `payouts/legacy/scripts/` — **no deletion** |
-| **PR F** | Verify runtime/API dependencies for `payouts/app/*` |
-| **PR G** | Design SC-node-level payout-credit ledger |
-| **PR H** | Guarded SC-node payout preparation; no wallet execution unless separately approved |
+| **PR F** | `payouts/app` dependency audit + boundary README — no moves |
+| **PR G** | SC-node payout address registry spec/schema |
+| **PR H** | Read-only support-wallet reward listener |
+| **PR I** | SC-node credit ledger (no wallet sends) |
+| **PR J** | Payout plan generator (no wallet sends) |
+| **PR K** | Guarded dry-run wallet payout execution (separate approval) |
