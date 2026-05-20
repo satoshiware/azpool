@@ -46,6 +46,8 @@ accepted_delta = current.shares_accepted - previous.shares_accepted
 
 A future payout/ledger service will read `pool_share_work_deltas` grouped by `sc_node_id`. Deploy via `deploy/systemd/azcoin-pool-collector.service` (one-shot) and `deploy/systemd/azcoin-pool-collector.timer` (30s interval). See `docs/runbooks/pool-monitoring-collector.md`.
 
+**Read-only SC-node work summary:** `payouts/scripts/sc_node_work_summary.py` prints JSON totals grouped by `sc_node_id` (with unmapped `sc_node_id IS NULL` rows reported separately). It is read-only telemetry review only — not payout execution — and does not expose `user_identity` in default output. See `docs/runbooks/pool-monitoring-collector.md` for the `azledger` run command.
+
 Migrations: `payouts/migrations/001_pool_telemetry_collector.sql`, `payouts/migrations/002_sc_node_identity_mapping.sql`, `payouts/migrations/003_pool_instance_registry.sql`
 
 ---
