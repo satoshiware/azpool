@@ -42,6 +42,7 @@ accepted_delta = current.shares_accepted - previous.shares_accepted
 - `DATABASE_URL` remains required in collector.env.
 - `POOL_INSTANCES` env JSON is temporary fallback only when DB registry is empty/unavailable.
 - Disable a pool with `status='inactive'` or `monitoring_enabled=false` — no service restart needed.
+- A Postgres advisory lock prevents overlapping one-shot runs (timer vs manual). Overlap skips safely with exit code 0.
 
 A future payout/ledger service will read `pool_share_work_deltas` grouped by `sc_node_id`. Deploy via `deploy/systemd/azcoin-pool-collector.service` (one-shot) and `deploy/systemd/azcoin-pool-collector.timer` (30s interval). See `docs/runbooks/pool-monitoring-collector.md`.
 
