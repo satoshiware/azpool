@@ -50,6 +50,31 @@ def test_unknown_paths() -> None:
     assert inventory.suggest_classification("payouts/README.md") == "UNKNOWN"
 
 
+def test_quarantined_legacy_scripts_classify_legacy_candidate() -> None:
+    assert (
+        inventory.suggest_classification("payouts/legacy/scripts/demo_interval_run.py")
+        == "LEGACY-CANDIDATE"
+    )
+    assert (
+        inventory.suggest_classification("payouts/legacy/scripts/backfill_postgres_shadow.py")
+        == "LEGACY-CANDIDATE"
+    )
+    assert (
+        inventory.suggest_classification(
+            "payouts/legacy/scripts/backfill_sqlite_settlement_mapping.py"
+        )
+        == "LEGACY-CANDIDATE"
+    )
+
+
+def test_legacy_readme_classifies_do_not_remove_yet() -> None:
+    assert inventory.suggest_classification("payouts/legacy/README.md") == "DO-NOT-REMOVE-YET"
+
+
+def test_scan_roots_include_payouts_legacy() -> None:
+    assert "payouts/legacy" in inventory._SCAN_ROOTS
+
+
 def test_broken_pipe_on_stdout_exits_cleanly(monkeypatch: pytest.MonkeyPatch) -> None:
     def _raise_broken_pipe(*_args: object, **_kwargs: object) -> None:
         raise BrokenPipeError()

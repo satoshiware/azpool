@@ -50,6 +50,8 @@ A future payout/ledger service will read `pool_share_work_deltas` grouped by `sc
 
 **Read-only pool-ledger admin:** `payouts/scripts/pool_ledger_admin_readonly.py` lists pool instances, SC nodes, identity mappings, and top unmapped identities (`user_identity` only in the `unmapped-identities` admin command). Not payout execution. See `docs/runbooks/pool-ledger-admin.md`.
 
+**Legacy quarantine (PR E):** User-level payout demo and backfill scripts live under `payouts/legacy/scripts/` (not `payouts/scripts/`). They are preserved for audit only — not part of support-node SC-node telemetry/admin. See `payouts/legacy/README.md`.
+
 Migrations: `payouts/migrations/001_pool_telemetry_collector.sql`, `payouts/migrations/002_sc_node_identity_mapping.sql`, `payouts/migrations/003_pool_instance_registry.sql`
 
 ---
@@ -101,13 +103,13 @@ Run a complete local demo that:
 - prints a payout-ready table.
 
 ```bash
-python scripts/demo_interval_run.py
+python legacy/scripts/demo_interval_run.py
 ```
 
 Optional args:
 
 ```bash
-python scripts/demo_interval_run.py --db-path ./demo_payouts.db --interval-minutes 90 --reward-btc 0.01000000
+python legacy/scripts/demo_interval_run.py --db-path ./demo_payouts.db --interval-minutes 90 --reward-btc 0.01000000
 ```
 
 ### Live API Mode
@@ -115,7 +117,7 @@ python scripts/demo_interval_run.py --db-path ./demo_payouts.db --interval-minut
 To poll fresh translator data every run (instead of static embedded payloads):
 
 ```bash
-python scripts/demo_interval_run.py \
+python legacy/scripts/demo_interval_run.py \
    --mode live \
    --db-path ./demo_live.db \
    --interval-minutes 4 \
@@ -139,13 +141,13 @@ You can control demo snapshot and payout cadence from environment values:
 Example run using env defaults:
 
 ```bash
-python scripts/demo_interval_run.py --mode live
+python legacy/scripts/demo_interval_run.py --mode live
 ```
 
 Example explicit 2-minute payout with 2-minute snapshots:
 
 ```bash
-python scripts/demo_interval_run.py --mode live --interval-minutes 2 --snapshot-interval-seconds 120 --loop-cycles 5
+python legacy/scripts/demo_interval_run.py --mode live --interval-minutes 2 --snapshot-interval-seconds 120 --loop-cycles 5
 ```
 
 The output includes:
@@ -190,14 +192,14 @@ Dry-run one historical settlement into the Postgres shadow ledger:
 
 ```bash
 POSTGRES_LEDGER_DATABASE_URL=postgresql+psycopg://azledger:azledger_dev_password@localhost:5432/azcoin_ledger_dev \
-python scripts/backfill_postgres_shadow.py --settlement-id 49
+python legacy/scripts/backfill_postgres_shadow.py --settlement-id 49
 ```
 
 Write a bounded range only when you explicitly want inserts/upserts:
 
 ```bash
 POSTGRES_LEDGER_DATABASE_URL=postgresql+psycopg://azledger:azledger_dev_password@localhost:5432/azcoin_ledger_dev \
-python scripts/backfill_postgres_shadow.py --start-id 40 --end-id 49 --write
+python legacy/scripts/backfill_postgres_shadow.py --start-id 40 --end-id 49 --write
 ```
 
 ## Step 7 Candidate Read Cutover

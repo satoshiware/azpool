@@ -8,7 +8,9 @@
 
 **Maintain** the current collector, read-only reporting, and read-only admin paths as **ACTIVE**. **Classify** old user-level payout, settlement, SQLite, and FastAPI service code as **LEGACY-CANDIDATE**. **Require** file-level inventory verification (see [payout-ledger-file-inventory.md](../inventory/payout-ledger-file-inventory.md)) before any deletion or quarantine.
 
-**PR D (`feature/payout-ledger-legacy-inventory-v0`) does not delete, move, or rename code.** It only adds documentation, a read-only inventory script, and tests.
+**PR D (`feature/payout-ledger-legacy-inventory-v0`)** added inventory documentation and a read-only inventory script only (no code moves).
+
+**PR E (`feature/payout-ledger-legacy-quarantine-plan-v0`)** quarantines standalone legacy scripts under `payouts/legacy/scripts/` via `git mv` only — **no deletion**, no change to active collector/admin/reporting behavior.
 
 **Future payouts** will be **SC-node-level** (`sc_node_id` → SC node wallet), not worker/user-level (`user_identity`). The support node does not pay individual pool workers; splits happen below the SC node.
 
@@ -28,7 +30,25 @@ Current delivered work is telemetry, registry, identity mapping, read-only repor
 
 The repo retains a large **legacy-candidate** tree from an earlier worker/user payout and settlement design. That code must not be deleted without the inventory matrix, verification commands, and removal criteria below.
 
-## Inventory artifact (PR D)
+## PR E quarantine decision
+
+Standalone legacy scripts with **no** active `deploy/` or systemd references were moved (not deleted) to reduce accidental use while preserving audit history:
+
+| New path | Former path |
+|----------|-------------|
+| `payouts/legacy/scripts/demo_interval_run.py` | `payouts/scripts/demo_interval_run.py` |
+| `payouts/legacy/scripts/backfill_postgres_shadow.py` | `payouts/scripts/backfill_postgres_shadow.py` |
+| `payouts/legacy/scripts/backfill_sqlite_settlement_mapping.py` | `payouts/scripts/backfill_sqlite_settlement_mapping.py` |
+
+- **No code deleted.**
+- **No change** to `payouts/collector/app/*`, read-only admin/report scripts, or support-node telemetry migrations.
+- **`payouts/legacy/README.md`** documents quarantine rules and SC-node-first architecture.
+- **`payouts/app/*` remains untouched** pending a separate runtime/API dependency review (PR F).
+- `payouts/tests/test_postgres_shadow_backfill.py` updated in PR E to load the script from `payouts/legacy/scripts/backfill_postgres_shadow.py`.
+
+Preflight: grep across `deploy/`, `docs/runbooks`, and collector paths found **no** production references to the old `payouts/scripts/` paths for these three files. References remain in `payouts/README.md` (updated to `legacy/scripts/`) and legacy `payouts/tests/`.
+
+## Inventory artifact (PR D / PR E)
 
 | Artifact | Purpose |
 |----------|---------|
@@ -67,9 +87,9 @@ See the full matrix in [payout-ledger-file-inventory.md](../inventory/payout-led
 | `payouts/app/postgres_sender.py` | Postgres-backed sender |
 | `payouts/app/reward_contract.py` | Reward contract assumptions |
 | `payouts/app/db.py` | SQLite and legacy DB helpers |
-| `payouts/scripts/demo_interval_run.py` | Demo / interval payout runner |
-| `payouts/scripts/backfill_postgres_shadow.py` | Shadow backfill |
-| `payouts/scripts/backfill_sqlite_settlement_mapping.py` | SQLite settlement mapping backfill |
+| `payouts/legacy/scripts/demo_interval_run.py` | Demo / interval payout runner (quarantined PR E) |
+| `payouts/legacy/scripts/backfill_postgres_shadow.py` | Shadow backfill (quarantined PR E) |
+| `payouts/legacy/scripts/backfill_sqlite_settlement_mapping.py` | SQLite settlement mapping backfill (quarantined PR E) |
 | `payouts/tests/*` (subset) | Tests asserting old user-level payout/settlement behavior |
 
 ## Do-not-remove-yet
@@ -105,8 +125,8 @@ See the full matrix in [payout-ledger-file-inventory.md](../inventory/payout-led
 
 | PR | Scope |
 |----|--------|
-| **PR D** | Inventory only (this ADR + matrix + script) — **no deletion** |
-| **PR E** | Quarantine clearly unused demos/backfills/docs if safe |
-| **PR F** | Remove or isolate legacy FastAPI / user-level payout path if no runtime dependency |
+| **PR D** | Inventory only (matrix + script) — **no deletion** |
+| **PR E** | Quarantine standalone legacy scripts → `payouts/legacy/scripts/` — **no deletion** |
+| **PR F** | Verify runtime/API dependencies for `payouts/app/*` |
 | **PR G** | Design SC-node-level payout-credit ledger |
-| **PR H** | Guarded money movement (only after G + ops sign-off) |
+| **PR H** | Guarded SC-node payout preparation; no wallet execution unless separately approved |

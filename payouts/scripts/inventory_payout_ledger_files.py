@@ -50,15 +50,10 @@ _ACTIVE_PREFIXES = (
 
 _LEGACY_PREFIXES = (
     "payouts/app/",
+    "payouts/legacy/scripts/",
 )
 
-_LEGACY_EXACT = frozenset(
-    {
-        "payouts/scripts/demo_interval_run.py",
-        "payouts/scripts/backfill_postgres_shadow.py",
-        "payouts/scripts/backfill_sqlite_settlement_mapping.py",
-    }
-)
+_LEGACY_EXACT: frozenset[str] = frozenset()
 
 _LEGACY_TEST_PREFIX = "payouts/tests/"
 
@@ -71,11 +66,13 @@ _DO_NOT_REMOVE_EXACT = frozenset(
     {
         "payouts/alembic.ini",
         "payouts/alembic/env.py",
+        "payouts/legacy/README.md",
     }
 )
 
 _SCAN_ROOTS = (
     "payouts/app",
+    "payouts/legacy",
     "payouts/collector/app",
     "payouts/scripts",
     "payouts/tests",
@@ -100,8 +97,6 @@ def suggest_classification(path: str) -> str:
     for prefix in _ACTIVE_PREFIXES:
         if normalized.startswith(prefix):
             return "ACTIVE"
-    if normalized in _LEGACY_EXACT:
-        return "LEGACY-CANDIDATE"
     for prefix in _LEGACY_PREFIXES:
         if normalized.startswith(prefix):
             return "LEGACY-CANDIDATE"
