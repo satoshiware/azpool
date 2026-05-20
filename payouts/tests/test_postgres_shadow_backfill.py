@@ -17,7 +17,12 @@ def _load_backfill_module():
     if module_name in sys.modules:
         return sys.modules[module_name]
 
-    script_path = Path(__file__).resolve().parents[1] / "scripts" / "backfill_postgres_shadow.py"
+    script_path = (
+        Path(__file__).resolve().parents[1]
+        / "legacy"
+        / "scripts"
+        / "backfill_postgres_shadow.py"
+    )
     spec = importlib.util.spec_from_file_location(module_name, script_path)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)

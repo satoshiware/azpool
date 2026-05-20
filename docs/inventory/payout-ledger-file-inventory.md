@@ -1,7 +1,7 @@
-# Payout ledger file inventory (PR D)
+# Payout ledger file inventory
 
-**Branch:** `feature/payout-ledger-legacy-inventory-v0`  
-**Purpose:** Classify `payouts/` and related docs for safe legacy cleanup. **No deletions in this PR.**
+**Branch:** `feature/payout-ledger-legacy-quarantine-plan-v0` (PR E quarantine updates)
+**Purpose:** Classify `payouts/` and related docs for safe legacy cleanup. **No deletions** — standalone legacy scripts quarantined under `payouts/legacy/scripts/` (PR E).
 
 Related: [ADR-pool-ledger-legacy-cleanup-plan.md](../adr/ADR-pool-ledger-legacy-cleanup-plan.md)  
 Helper script: `payouts/scripts/inventory_payout_ledger_files.py` (read-only JSON scan)
@@ -10,7 +10,7 @@ Helper script: `payouts/scripts/inventory_payout_ledger_files.py` (read-only JSO
 
 The support-node **active path** is pool telemetry collection, DB-backed pool registry, SC-node identity mapping, and read-only reporting/admin scripts under `payouts/collector/` plus `payouts/scripts/sc_node_work_summary.py` and `payouts/scripts/pool_ledger_admin_readonly.py`. Systemd on the support node runs only `payouts.collector.app.main` (`deploy/systemd/azcoin-pool-collector.service`).
 
-A large **legacy-candidate** tree remains from the original worker/user-level payout service: FastAPI app (`payouts/app/`), SQLite/Postgres settlement and sender modules, demo/backfill scripts, and extensive `payouts/tests/`. These are **not** imported by the collector or read-only admin scripts (static grep, 2026-05-19).
+A large **legacy-candidate** tree remains from the original worker/user-level payout service: FastAPI app (`payouts/app/`), SQLite/Postgres settlement and sender modules, and extensive `payouts/tests/`. **PR E quarantined** three standalone scripts to `payouts/legacy/scripts/` (demo interval runner, Postgres shadow backfill, SQLite settlement mapping backfill) — moved, not deleted. These are **not** imported by the collector or read-only admin scripts; **no** `deploy/` or systemd references to the old `payouts/scripts/` paths (preflight grep, 2026-05-19).
 
 **Historical Alembic** and **telemetry migrations** (`payouts/migrations/001–003`) are **DO-NOT-REMOVE-YET** until a deliberate DB retirement plan exists.
 
@@ -69,9 +69,10 @@ Columns: **Path** | **Classification** | **Reason** | **Evidence** | **Proposed 
 | `payouts/app/postgres_*.py` (remaining) | LEGACY-CANDIDATE | Shadow/read/settlement postgres helpers | payouts/tests postgres_* | Quarantine per module | High | Per-file import grep |
 | `payouts/app/translator_*.py` | LEGACY-CANDIDATE | Translator capture/reconstruction | Specialized tests | Keep until translator ops confirm | Medium | Ops runbook |
 | `payouts/app/hooks.py`, `audit.py`, `metrics_parser.py`, `runtime_cutover.py` | LEGACY-CANDIDATE | Legacy app support | Imported by main/tests | Quarantine with app/ | Medium | Import grep |
-| `payouts/scripts/demo_interval_run.py` | LEGACY-CANDIDATE | Demo payout interval runner | README examples; keywords payout, sqlite | Archive or delete PR E | High | No prod systemd ref |
-| `payouts/scripts/backfill_postgres_shadow.py` | LEGACY-CANDIDATE | Shadow backfill | README; settlement keywords | Delete PR E if unused | Medium | Ops usage log |
-| `payouts/scripts/backfill_sqlite_settlement_mapping.py` | LEGACY-CANDIDATE | SQLite settlement mapping backfill | sqlite + settlement keywords | Delete PR E | Medium | Confirm no cron |
+| `payouts/legacy/scripts/demo_interval_run.py` | LEGACY-CANDIDATE | Demo payout interval runner (quarantined PR E) | Was `payouts/scripts/`; no systemd ref | Keep in legacy/ until SC-node design | High | `rg demo_interval` |
+| `payouts/legacy/scripts/backfill_postgres_shadow.py` | LEGACY-CANDIDATE | Shadow backfill (quarantined PR E) | Was `payouts/scripts/`; `test_postgres_shadow_backfill.py` updated in PR E | Keep in legacy/ | Medium | Ops usage log |
+| `payouts/legacy/scripts/backfill_sqlite_settlement_mapping.py` | LEGACY-CANDIDATE | SQLite settlement mapping backfill (quarantined PR E) | Was `payouts/scripts/` | Keep in legacy/ | Medium | Confirm no cron |
+| `payouts/legacy/README.md` | DO-NOT-REMOVE-YET | Quarantine index and safety rules | PR E | Keep | Low | Link from payouts/README |
 | `payouts/tests/test_settlement.py` | LEGACY-CANDIDATE | Legacy settlement tests | settlement keyword | Remove with settlement.py | Low | pytest collection |
 | `payouts/tests/test_sender.py` | LEGACY-CANDIDATE | Sender tests | sender, wallet keywords | Remove with sender.py | Low | Wallet safety grep |
 | `payouts/tests/test_postgres_settlement*.py` | LEGACY-CANDIDATE | Postgres settlement tests | settlement keyword | Remove with postgres_settlement | Low | CI job scope |
@@ -147,10 +148,10 @@ PYTHONPATH=/opt/azcoin-super/src/azpool .venv/bin/python -m pytest payouts/colle
 
 | PR | Scope | Deletes code? |
 |----|--------|----------------|
-| **PR D** (`feature/payout-ledger-legacy-inventory-v0`) | This inventory matrix + script + ADR link | **No** |
-| **PR E** | Quarantine unused demos/backfills/docs if grep shows no prod refs | Maybe docs/demos only |
-| **PR F** | Remove or isolate legacy FastAPI / `payouts/app` if no runtime dependency | Yes (legacy app) |
-| **PR G** | Design SC-node-level payout-credit ledger (no money movement) | No |
-| **PR H** | Guarded money movement (only after G + ops sign-off) | Maybe sender path |
+| **PR D** (`feature/payout-ledger-legacy-inventory-v0`) | Inventory matrix + script + ADR link | **No** |
+| **PR E** (`feature/payout-ledger-legacy-quarantine-plan-v0`) | Quarantine standalone legacy scripts → `payouts/legacy/scripts/` | **No** (git mv only) |
+| **PR F** | Verify runtime/API dependencies for `payouts/app/*` | Maybe isolate app |
+| **PR G** | Design SC-node-level payout-credit ledger | **No** |
+| **PR H** | Guarded SC-node-level payout preparation; no wallet execution unless separately approved | TBD |
 
-**PR D explicitly does not delete, move, or rename any runtime code.**
+**PR E** moved three scripts only. **`payouts/app/*` untouched** pending PR F runtime dependency review.
