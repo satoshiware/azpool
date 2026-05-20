@@ -87,6 +87,49 @@ GROUP BY sc_node_id
 ORDER BY work_delta_total DESC;
 ```
 
+## Read-only SC-node work summary
+
+A read-only report aggregates `pool_share_work_deltas` by `sc_node_id` for payout/credit review. It does **not** execute payouts, call wallet RPC, or create transactions.
+
+- **`user_identity` is hidden by default** — the report groups by `sc_node_id` only.
+- **Unmapped rows** (`sc_node_id IS NULL`) are summarized separately and are **unpaid**.
+- Run as the `azledger` service user with `DATABASE_URL` from collector env (no secrets printed to stdout).
+
+```bash
+cd /opt/azcoin-super/src/azpool
+set -a
+source /etc/azcoin-super/pool-ledger/collector.env
+set +a
+PYTHONPATH=/opt/azcoin-super/src/azpool .venv/bin/python payouts/scripts/sc_node_work_summary.py
+```
+
+Example output shape:
+
+```json
+{
+  "sc_nodes": [
+    {
+      "sc_node_id": "sc-3",
+      "display_name": "SC Node 3",
+      "status": "active",
+      "payout_enabled": false,
+      "accepted_delta_total": "120",
+      "work_delta_total": "4500.0",
+      "delta_rows": 42,
+      "first_observed_at": "2026-05-19T12:00:00+00:00",
+      "last_observed_at": "2026-05-19T13:00:00+00:00"
+    }
+  ],
+  "unmapped": {
+    "accepted_delta_total": "30",
+    "work_delta_total": "900.0",
+    "delta_rows": 10,
+    "first_observed_at": "2026-05-19T12:00:00+00:00",
+    "last_observed_at": "2026-05-19T13:00:00+00:00"
+  }
+}
+```
+
 ## Pool instance registry (DB-backed)
 
 Pool monitoring targets are loaded from the **`pool_instances`** Postgres table on every one-shot collector run. No service restart is required when adding, updating, or disabling pools.
