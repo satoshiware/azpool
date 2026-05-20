@@ -67,7 +67,15 @@ Findings:
 - Audit inbound counts **exclude** generated/cache files (`__pycache__/`, `.pytest_cache/`, `.pyc`, `.pyo`, `.so`, `.git/`, `.venv/`).
 - **Do not quarantine** `payouts/app` until replacement SC-node payout-credit design (PR G–I), translator runtime ownership is decided, and production verification complete.
 
-**Next architectural step:** SC-node payout address registry (PR G) and read-only support-wallet reward listener (PR H). Future removal/quarantine requires replacement SC-node ledger and verified no production dependency.
+**Next architectural step:** SC-node payout address registry (PR G), then read-only support-wallet reward listener (PR H). Future removal/quarantine of `payouts/app` requires credit ledger (PR I+) and verified no production dependency.
+
+## PR G payout address registry decision
+
+PR G (`feature/sc-node-payout-address-registry-v0`) begins the **replacement SC-node payout foundation** with table `sc_node_payout_addresses`, validation helpers, and read-only admin visibility.
+
+- **Registry only** — no wallet sends, no `azc`, no payout automation.
+- See [ADR-sc-node-payout-address-registry.md](../adr/ADR-sc-node-payout-address-registry.md) and [sc-node-payout-addresses.md](../runbooks/sc-node-payout-addresses.md).
+- **`payouts/app/*` remains in place**; this does not retire legacy user-level payout code.
 
 ## Inventory artifact (PR D / PR E / PR F)
 
@@ -153,7 +161,7 @@ See the full matrix in [payout-ledger-file-inventory.md](../inventory/payout-led
 | **PR D** | Inventory only (matrix + script) — **no deletion** |
 | **PR E** | Quarantine standalone legacy scripts → `payouts/legacy/scripts/` — **no deletion** |
 | **PR F** | `payouts/app` dependency audit + boundary README — no moves |
-| **PR G** | SC-node payout address registry spec/schema |
+| **PR G** | SC-node payout address registry (schema + read-only admin) |
 | **PR H** | Read-only support-wallet reward listener |
 | **PR I** | SC-node credit ledger (no wallet sends) |
 | **PR J** | Payout plan generator (no wallet sends) |
