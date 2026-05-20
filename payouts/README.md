@@ -33,7 +33,7 @@ accepted_delta = current.shares_accepted - previous.shares_accepted
 - `user_identity` is collector/audit telemetry; it should not appear in payout reports by default.
 - Unknown identities remain unmapped and unpaid until explicitly mapped.
 - Native long-term identity: `az/scnode/<sc_node_id>`.
-- Temporary prefix mapping example: `baveetstudy.` → `sc-3` with `payout_enabled = false`.
+- Temporary prefix mapping example: `baveetstudy.` → `sc-2` with `payout_enabled = false` (`sc-3` is inactive).
 - Historical rows with `sc_node_id IS NULL` are not auto-backfilled in v0.1.
 
 **Pool instance registry (DB-backed):**
@@ -47,6 +47,8 @@ accepted_delta = current.shares_accepted - previous.shares_accepted
 A future payout/ledger service will read `pool_share_work_deltas` grouped by `sc_node_id`. Deploy via `deploy/systemd/azcoin-pool-collector.service` (one-shot) and `deploy/systemd/azcoin-pool-collector.timer` (30s interval). See `docs/runbooks/pool-monitoring-collector.md`.
 
 **Read-only SC-node work summary:** `payouts/scripts/sc_node_work_summary.py` prints JSON totals grouped by `sc_node_id` (with unmapped `sc_node_id IS NULL` rows reported separately). It is read-only telemetry review only — not payout execution — and does not expose `user_identity` in default output. See `docs/runbooks/pool-monitoring-collector.md` for the `azledger` run command.
+
+**Read-only pool-ledger admin:** `payouts/scripts/pool_ledger_admin_readonly.py` lists pool instances, SC nodes, identity mappings, and top unmapped identities (`user_identity` only in the `unmapped-identities` admin command). Not payout execution. See `docs/runbooks/pool-ledger-admin.md`.
 
 Migrations: `payouts/migrations/001_pool_telemetry_collector.sql`, `payouts/migrations/002_sc_node_identity_mapping.sql`, `payouts/migrations/003_pool_instance_registry.sql`
 

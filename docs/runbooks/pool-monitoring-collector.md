@@ -59,20 +59,20 @@ After migration `002_sc_node_identity_mapping.sql`:
 
 ```sql
 INSERT INTO sc_nodes (id, display_name, status, payout_enabled)
-VALUES ('sc-3', 'SC Node 3', 'active', false)
+VALUES ('sc-2', 'SC Node 2', 'active', false)
 ON CONFLICT (id) DO UPDATE
 SET display_name = EXCLUDED.display_name,
     status = EXCLUDED.status,
     updated_at = now();
 
 INSERT INTO sc_node_identity_mappings (sc_node_id, match_type, match_value, status)
-VALUES ('sc-3', 'prefix', 'baveetstudy.', 'active')
+VALUES ('sc-2', 'prefix', 'baveetstudy.', 'active')
 ON CONFLICT (match_type, match_value) DO UPDATE
 SET sc_node_id = EXCLUDED.sc_node_id,
     status = EXCLUDED.status;
 ```
 
-`payout_enabled` remains `false` for this temporary mapping. New collector runs map `baveetstudy.miner*` to `sc-3`; existing historical NULL rows stay NULL unless a separate explicit backfill is approved later.
+`payout_enabled` remains `false` for this temporary mapping. New collector runs map `baveetstudy.miner*` to `sc-2`. `sc-3` is inactive and must not be used as the active `baveetstudy.` example. Existing historical NULL rows stay NULL unless a separate explicit backfill is approved later.
 
 ### SC-node work summary (payout/credit grouping)
 
@@ -109,8 +109,8 @@ Example output shape:
 {
   "sc_nodes": [
     {
-      "sc_node_id": "sc-3",
-      "display_name": "SC Node 3",
+      "sc_node_id": "sc-2",
+      "display_name": "SC Node 2",
       "status": "active",
       "payout_enabled": false,
       "accepted_delta_total": "120",
@@ -129,6 +129,8 @@ Example output shape:
   }
 }
 ```
+
+**Pool ledger admin (read-only):** registry, SC nodes, mappings, and unmapped identities — see [pool-ledger-admin.md](pool-ledger-admin.md).
 
 ## Pool instance registry (DB-backed)
 
