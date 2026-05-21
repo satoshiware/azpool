@@ -14,9 +14,9 @@ from typing import Any
 import psycopg
 from psycopg.rows import dict_row
 
+from payouts.collector.app import payout_addresses
 from payouts.collector.app import sc_node_payout_production_preflight as production
 from payouts.collector.app.sc_node_payout_planner import (
-    build_active_default_payout_addresses_sql,
     parse_decimal_amount,
     parse_reserve_fraction,
 )
@@ -157,7 +157,7 @@ def _run_getbalances(*, azc_bin: str, source_wallet_name: str) -> dict[str, Any]
 
 def _address_lookup(conn: psycopg.Connection) -> dict[str, list[dict[str, object]]]:
     with conn.cursor(row_factory=dict_row) as cur:
-        cur.execute(build_active_default_payout_addresses_sql())
+        cur.execute(payout_addresses.build_active_default_payout_addresses_sql())
         rows = cur.fetchall()
     lookup: dict[str, list[dict[str, object]]] = {}
     for row in rows:
