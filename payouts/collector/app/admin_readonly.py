@@ -9,6 +9,7 @@ from payouts.collector.app import (
     payout_addresses,
     reward_events,
     sc_node_credit_ledger,
+    sc_node_payout_plan_review,
     sc_node_payout_planner,
 )
 
@@ -155,11 +156,11 @@ def row_to_credit_run_event_dict(row: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def build_payout_plans_sql() -> str:
-    return sc_node_payout_planner.build_payout_plans_sql()
+    return sc_node_payout_plan_review.build_payout_plans_list_sql()
 
 
 def build_payout_plan_details_sql(payout_plan_id: int) -> str:
-    return sc_node_payout_planner.build_payout_plan_details_sql(payout_plan_id)
+    return sc_node_payout_plan_review.build_payout_plan_details_sql(payout_plan_id)
 
 
 def build_payout_plan_rows_sql(payout_plan_id: int) -> str:
@@ -167,7 +168,7 @@ def build_payout_plan_rows_sql(payout_plan_id: int) -> str:
 
 
 def row_to_payout_plan_dict(row: Mapping[str, Any]) -> dict[str, Any]:
-    return sc_node_payout_planner.row_to_payout_plan_dict(row)
+    return sc_node_payout_plan_review.row_to_payout_plan_dict(row)
 
 
 def row_to_payout_plan_row_dict(row: Mapping[str, Any]) -> dict[str, Any]:

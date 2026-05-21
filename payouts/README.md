@@ -62,7 +62,9 @@ A future payout/ledger service will read `pool_share_work_deltas` grouped by `sc
 
 **SC-node payout planner (PR J):** Migration `007_sc_node_payout_plans.sql` builds **no-send** draft payout plans from draft credits + active/default payout addresses, with operator `--trusted-balance-snapshot` and `--reserve-fraction` (default 0.50). `sc_node_payout_planner.py` preview/write-draft. Read-only admin: `payout-plans`, `payout-plan-details`. **Plans are proposals only — not wallet transactions.** See [sc-node-payout-planner.md](docs/sc-node-payout-planner.md).
 
-Migrations: `payouts/migrations/001_pool_telemetry_collector.sql`, `payouts/migrations/002_sc_node_identity_mapping.sql`, `payouts/migrations/003_pool_instance_registry.sql`, `payouts/migrations/004_sc_node_payout_addresses.sql`, `payouts/migrations/005_support_wallet_reward_events.sql`, `payouts/migrations/006_sc_node_credit_ledger.sql`, `payouts/migrations/007_sc_node_payout_plans.sql`
+**SC-node payout plan approval/preflight (PR K):** Migration `008_sc_node_payout_plan_approval_preflight.sql` adds approve/cancel/preflight workflow. `sc_node_payout_plan_review.py` with exact confirmation `APPROVE PAYOUT PLAN <id> NO SEND`. **Approval and preflight are not execution or spend authorization.** See [sc-node-payout-plan-review.md](docs/sc-node-payout-plan-review.md).
+
+Migrations: `payouts/migrations/001_pool_telemetry_collector.sql`, `payouts/migrations/002_sc_node_identity_mapping.sql`, `payouts/migrations/003_pool_instance_registry.sql`, `payouts/migrations/004_sc_node_payout_addresses.sql`, `payouts/migrations/005_support_wallet_reward_events.sql`, `payouts/migrations/006_sc_node_credit_ledger.sql`, `payouts/migrations/007_sc_node_payout_plans.sql`, `payouts/migrations/008_sc_node_payout_plan_approval_preflight.sql`
 
 ---
 

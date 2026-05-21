@@ -111,6 +111,7 @@ def test_admin_command_map_includes_credit_commands() -> None:
 def test_payout_plans_sql_is_select_only() -> None:
     sql = admin_readonly.build_payout_plans_sql()
     assert "sc_node_payout_plans" in sql
+    assert "preflight_status" in sql
     admin_readonly.assert_readonly_sql(sql)
 
 
