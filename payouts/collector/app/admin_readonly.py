@@ -11,6 +11,7 @@ from payouts.collector.app import (
     sc_node_credit_ledger,
     sc_node_payout_plan_review,
     sc_node_payout_planner,
+    sc_node_payout_test_executor,
 )
 
 MIN_UNMAPPED_LIMIT = 1
@@ -173,6 +174,26 @@ def row_to_payout_plan_dict(row: Mapping[str, Any]) -> dict[str, Any]:
 
 def row_to_payout_plan_row_dict(row: Mapping[str, Any]) -> dict[str, Any]:
     return sc_node_payout_planner.row_to_payout_plan_row_dict(row)
+
+
+def build_payout_test_executions_sql() -> str:
+    return sc_node_payout_test_executor.build_test_executions_list_sql()
+
+
+def build_payout_test_execution_details_sql(test_execution_id: int) -> str:
+    return sc_node_payout_test_executor.build_test_execution_details_sql(test_execution_id)
+
+
+def build_payout_test_execution_rows_sql(test_execution_id: int) -> str:
+    return sc_node_payout_test_executor.build_test_execution_rows_sql(test_execution_id)
+
+
+def row_to_payout_test_execution_dict(row: Mapping[str, Any]) -> dict[str, Any]:
+    return sc_node_payout_test_executor.row_to_test_execution_dict(row)
+
+
+def row_to_payout_test_execution_row_dict(row: Mapping[str, Any]) -> dict[str, Any]:
+    return sc_node_payout_test_executor.row_to_test_execution_row_dict(row)
 
 
 def _serialize_datetime(value: datetime | None) -> str | None:

@@ -64,7 +64,9 @@ A future payout/ledger service will read `pool_share_work_deltas` grouped by `sc
 
 **SC-node payout plan approval/preflight (PR K):** Migration `008_sc_node_payout_plan_approval_preflight.sql` adds approve/cancel/preflight workflow. `sc_node_payout_plan_review.py` with exact confirmation `APPROVE PAYOUT PLAN <id> NO SEND`. **Approval and preflight are not execution or spend authorization.** See [sc-node-payout-plan-review.md](docs/sc-node-payout-plan-review.md).
 
-Migrations: `payouts/migrations/001_pool_telemetry_collector.sql`, `payouts/migrations/002_sc_node_identity_mapping.sql`, `payouts/migrations/003_pool_instance_registry.sql`, `payouts/migrations/004_sc_node_payout_addresses.sql`, `payouts/migrations/005_support_wallet_reward_events.sql`, `payouts/migrations/006_sc_node_credit_ledger.sql`, `payouts/migrations/007_sc_node_payout_plans.sql`, `payouts/migrations/008_sc_node_payout_plan_approval_preflight.sql`
+**SC-node payout test/regtest executor (PR L):** Migration `009_sc_node_payout_test_execution.sql` adds fake execution tables only. `sc_node_payout_test_executor.py` supports `preview`, `execute-fake` (`fake_regtest` + test wallet name), `mark-confirmed`, and `details`. **Does not move real coins, call AZCoin Core RPC, `azc`, or subprocess.** Read-only admin: `payout-test-executions`, `payout-test-execution-details`. Production wallet executor remains a future PR. See [sc-node-payout-test-executor.md](docs/sc-node-payout-test-executor.md).
+
+Migrations: `payouts/migrations/001_pool_telemetry_collector.sql`, `payouts/migrations/002_sc_node_identity_mapping.sql`, `payouts/migrations/003_pool_instance_registry.sql`, `payouts/migrations/004_sc_node_payout_addresses.sql`, `payouts/migrations/005_support_wallet_reward_events.sql`, `payouts/migrations/006_sc_node_credit_ledger.sql`, `payouts/migrations/007_sc_node_payout_plans.sql`, `payouts/migrations/008_sc_node_payout_plan_approval_preflight.sql`, `payouts/migrations/009_sc_node_payout_test_execution.sql`
 
 ---
 
