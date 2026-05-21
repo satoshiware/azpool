@@ -41,6 +41,8 @@ The support node generates **draft payout plans** from draft SC-node credits (`s
 
 Execution PRs must compare plans against **current trusted wallet balance** and operator reserve controls (`--reserve-amount`, `--max-spend-percent`) before any send.
 
+PR K (approval/preflight) adds review workflow — see [ADR-sc-node-payout-plan-approval-preflight.md](ADR-sc-node-payout-plan-approval-preflight.md). Approval and preflight remain no-send.
+
 ## Consequences
 
 - Operators can review proposed SC-node payouts without moving coins.
