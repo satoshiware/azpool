@@ -11,6 +11,7 @@ from payouts.collector.app import (
     sc_node_credit_ledger,
     sc_node_payout_plan_review,
     sc_node_payout_planner,
+    sc_node_payout_production_preflight,
     sc_node_payout_test_executor,
 )
 
@@ -194,6 +195,30 @@ def row_to_payout_test_execution_dict(row: Mapping[str, Any]) -> dict[str, Any]:
 
 def row_to_payout_test_execution_row_dict(row: Mapping[str, Any]) -> dict[str, Any]:
     return sc_node_payout_test_executor.row_to_test_execution_row_dict(row)
+
+
+def build_production_preflights_sql() -> str:
+    return sc_node_payout_production_preflight.build_production_preflights_sql()
+
+
+def build_production_preflight_details_sql(production_preflight_id: int) -> str:
+    return sc_node_payout_production_preflight.build_production_preflight_details_sql(
+        production_preflight_id
+    )
+
+
+def build_production_preflight_rows_sql(production_preflight_id: int) -> str:
+    return sc_node_payout_production_preflight.build_production_preflight_rows_sql(
+        production_preflight_id
+    )
+
+
+def row_to_production_preflight_dict(row: Mapping[str, Any]) -> dict[str, Any]:
+    return sc_node_payout_production_preflight.row_to_production_preflight_dict(row)
+
+
+def row_to_production_preflight_row_dict(row: Mapping[str, Any]) -> dict[str, Any]:
+    return sc_node_payout_production_preflight.row_to_production_preflight_row_dict(row)
 
 
 def _serialize_datetime(value: datetime | None) -> str | None:
