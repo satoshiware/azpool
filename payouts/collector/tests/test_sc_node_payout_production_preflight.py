@@ -12,8 +12,12 @@ if str(AZPOOL_ROOT) not in sys.path:
     sys.path.insert(0, str(AZPOOL_ROOT))
 
 from payouts.collector.app import admin_readonly
+from payouts.collector.app import payout_addresses
 from payouts.collector.app import sc_node_payout_plan_review as plan_review
 from payouts.collector.app import sc_node_payout_production_preflight as production
+from payouts.collector.app.sc_node_payout_planner import (
+    build_active_default_payout_addresses_sql as planner_active_default_addresses_sql,
+)
 
 
 _WALLET_SEND_KEYWORDS = re.compile(
@@ -245,6 +249,23 @@ def test_admin_sql_is_select_only() -> None:
         admin_readonly.build_production_preflight_rows_sql(1),
     ):
         admin_readonly.assert_readonly_sql(sql)
+
+
+def test_address_lookup_sql_has_no_unbound_sc_node_id_placeholder() -> None:
+    sql = payout_addresses.build_active_default_payout_addresses_sql()
+    assert "%(sc_node_id)s" not in sql
+    assert "is_default = true" in sql
+    assert "status = 'active'" in sql
+    assert "%(sc_node_id)s" in planner_active_default_addresses_sql()
+
+
+def test_script_address_lookup_uses_all_active_default_addresses_sql() -> None:
+    source = (
+        AZPOOL_ROOT / "payouts/scripts/sc_node_payout_production_preflight.py"
+    ).read_text(encoding="utf-8")
+    assert "payout_addresses.build_active_default_payout_addresses_sql()" in source
+    assert "cur.execute(payout_addresses.build_active_default_payout_addresses_sql())" in source
+    assert "cur.execute(build_active_default_payout_addresses_sql())" not in source
 
 
 def test_script_getbalances_argv_is_explicit_list_without_shell() -> None:
