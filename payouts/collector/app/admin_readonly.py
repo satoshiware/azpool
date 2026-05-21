@@ -5,7 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Mapping
 
-from payouts.collector.app import payout_addresses
+from payouts.collector.app import payout_addresses, reward_events
 
 MIN_UNMAPPED_LIMIT = 1
 MAX_UNMAPPED_LIMIT = 500
@@ -108,6 +108,17 @@ def build_payout_addresses_sql() -> str:
 
 def row_to_payout_address_dict(row: Mapping[str, Any]) -> dict[str, Any]:
     return payout_addresses.row_to_payout_address_dict(row)
+
+
+def build_reward_events_sql(maturity_status: str | None = None) -> str:
+    return reward_events.build_reward_events_sql(
+        include_raw=False,
+        maturity_status=maturity_status,
+    )
+
+
+def row_to_reward_event_dict(row: Mapping[str, Any]) -> dict[str, Any]:
+    return reward_events.row_to_reward_event_dict(row, include_raw=False)
 
 
 def _serialize_datetime(value: datetime | None) -> str | None:

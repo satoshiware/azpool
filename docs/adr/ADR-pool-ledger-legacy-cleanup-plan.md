@@ -67,7 +67,15 @@ Findings:
 - Audit inbound counts **exclude** generated/cache files (`__pycache__/`, `.pytest_cache/`, `.pyc`, `.pyo`, `.so`, `.git/`, `.venv/`).
 - **Do not quarantine** `payouts/app` until replacement SC-node payout-credit design (PR G–I), translator runtime ownership is decided, and production verification complete.
 
-**Next architectural step:** SC-node payout address registry (PR G), then read-only support-wallet reward listener (PR H). Future removal/quarantine of `payouts/app` requires credit ledger (PR I+) and verified no production dependency.
+**Next architectural step:** SC-node credit ledger (PR I) after PR G (payout address registry) and PR H (read-only support-wallet reward listener). Future removal/quarantine of `payouts/app` requires credit ledger (PR I+) and verified no production dependency.
+
+## PR H support-wallet reward listener decision
+
+PR H (`feature/support-wallet-reward-listener-v0`) adds **`support_wallet_reward_events`** and read-only observation of support-wallet rewards via `azc listtransactions` only.
+
+- **Observe and record only** — no sends, no sign/broadcast, no payout plans, no SC-node credit ledger.
+- See [ADR-support-wallet-reward-listener.md](ADR-support-wallet-reward-listener.md) and [support-wallet-reward-listener.md](../runbooks/support-wallet-reward-listener.md).
+- **Collector timer and `payouts/app/*` unchanged.**
 
 ## PR G payout address registry decision
 

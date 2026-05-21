@@ -56,7 +56,9 @@ A future payout/ledger service will read `pool_share_work_deltas` grouped by `sc
 
 **SC-node payout address registry (PR G):** Migration `004_sc_node_payout_addresses.sql` adds `sc_node_payout_addresses` for per-SC-node payout destinations. Read-only admin command: `pool_ledger_admin_readonly.py payout-addresses`. **Payout execution is not implemented** — no wallet RPC, no coin sends. See [sc-node-payout-addresses.md](../docs/runbooks/sc-node-payout-addresses.md).
 
-Migrations: `payouts/migrations/001_pool_telemetry_collector.sql`, `payouts/migrations/002_sc_node_identity_mapping.sql`, `payouts/migrations/003_pool_instance_registry.sql`, `payouts/migrations/004_sc_node_payout_addresses.sql`
+**Support-wallet reward listener (PR H):** Migration `005_support_wallet_reward_events.sql` records support-wallet `generate` / `immature` / `orphan` rows from read-only `azc listtransactions`. Manual scan: `support_wallet_reward_events.py` (dry-run by default; `--write` to upsert). Read-only admin: `pool_ledger_admin_readonly.py reward-events`. **Does not send coins, sign/broadcast transactions, or generate payout plans.** See [support-wallet-reward-listener.md](../docs/runbooks/support-wallet-reward-listener.md).
+
+Migrations: `payouts/migrations/001_pool_telemetry_collector.sql`, `payouts/migrations/002_sc_node_identity_mapping.sql`, `payouts/migrations/003_pool_instance_registry.sql`, `payouts/migrations/004_sc_node_payout_addresses.sql`, `payouts/migrations/005_support_wallet_reward_events.sql`
 
 ---
 

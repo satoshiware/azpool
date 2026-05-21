@@ -31,6 +31,10 @@ _COMMANDS: dict[str, tuple[str, object]] = {
         admin_readonly.build_payout_addresses_sql,
         admin_readonly.row_to_payout_address_dict,
     ),
+    "reward-events": (
+        admin_readonly.build_reward_events_sql,
+        admin_readonly.row_to_reward_event_dict,
+    ),
 }
 
 
@@ -38,13 +42,25 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Read-only pool-ledger admin queries")
     parser.add_argument(
         "command",
-        choices=["pool-instances", "sc-nodes", "mappings", "payout-addresses", "unmapped-identities"],
+        choices=[
+            "pool-instances",
+            "sc-nodes",
+            "mappings",
+            "payout-addresses",
+            "reward-events",
+            "unmapped-identities",
+        ],
     )
     parser.add_argument(
         "--limit",
         type=int,
         default=admin_readonly.DEFAULT_UNMAPPED_LIMIT,
         help="Row limit for unmapped-identities (1-500)",
+    )
+    parser.add_argument(
+        "--maturity-status",
+        default=None,
+        help="Filter reward-events by maturity_status",
     )
     return parser.parse_args(argv)
 
@@ -78,9 +94,14 @@ def main(argv: list[str] | None = None) -> int:
         }
     else:
         build_sql, row_fn = _COMMANDS[args.command]
-        sql = build_sql()
+        if args.command == "reward-events":
+            sql = build_sql(args.maturity_status)
+        else:
+            sql = build_sql()
         rows = _run_query(database_url, sql, row_fn)
         payload = {"command": args.command, "rows": rows}
+        if args.command == "reward-events" and args.maturity_status:
+            payload["maturity_status"] = args.maturity_status
 
     json.dump(payload, sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")
