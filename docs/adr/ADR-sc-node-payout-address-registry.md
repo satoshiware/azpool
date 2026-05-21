@@ -8,7 +8,7 @@
 
 The support node stores **payout destination addresses per SC node** in Postgres table `sc_node_payout_addresses`. This PR adds the schema, read-only admin visibility, validation helpers, and documentation only.
 
-**No wallet sends, no `azc` calls, no transaction creation or broadcast.**
+**No wallet sends from the support ledger, no transaction creation or broadcast.** SC-node operators may use `azc` locally to verify listener addresses; the registry stores destination addresses only (no private keys or seed phrases).
 
 ## Context
 
@@ -39,7 +39,7 @@ Legacy user-level payout code under `payouts/app/` remains documented and untouc
 - `address_source` ∈ `manual`, `imported`, `wallet`, `api`
 - `status` ∈ `pending_verification`, `active`, `inactive`, `revoked`
 - `is_default` BOOLEAN
-- `verified_at`, `created_at`, `updated_at` TIMESTAMPTZ
+- `verified_at`, `retired_at` (nullable), `created_at`, `updated_at` TIMESTAMPTZ
 
 Partial unique index: one row per `sc_node_id` where `is_default = true AND status = 'active'`.
 

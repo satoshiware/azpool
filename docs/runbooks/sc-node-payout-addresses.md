@@ -1,12 +1,18 @@
 # SC-node payout addresses (registry v0.1)
 
-Register and review **payout destination addresses per SC node**. **Does not send coins, call `azc`, or invoke wallet RPC.**
+Register and review **payout / reward listener destination addresses per SC node**. **Does not send coins or invoke wallet RPC from the support ledger.**
 
-See also: [ADR-sc-node-payout-address-registry.md](../adr/ADR-sc-node-payout-address-registry.md), [pool-ledger-admin.md](pool-ledger-admin.md)
+See also: [ADR-sc-node-payout-address-registry.md](../adr/ADR-sc-node-payout-address-registry.md), [pool-ledger-admin.md](pool-ledger-admin.md), [support-wallet-reward-listener-v0.md](../../payouts/docs/support-wallet-reward-listener-v0.md)
 
 ## Purpose
 
-The support node pays/credits **SC nodes only** (`sc_node_id`). Before payout automation, each SC node needs one or more registered payout addresses with optional default selection.
+The support node pays/credits **SC nodes only** (`sc_node_id`). Each **SC node owns** the receiving/listener wallet on its host; the support ledger **only stores** the payout address and will pay to it in a later phase.
+
+**v0 is manual only** — operators insert and activate rows via SQL; no automated payout or listener daemon.
+
+**No secrets in the registry** — do not store private keys, seed phrases, wallet passphrases, or RPC credentials in `sc_node_payout_addresses`.
+
+Before payout automation, each SC node needs one or more registered payout addresses with optional default selection.
 
 This runbook covers:
 
@@ -18,14 +24,14 @@ This runbook covers:
 
 | Allowed | Not allowed (this PR) |
 |---------|------------------------|
-| Registry table + manual SQL | Wallet RPC, `azc`, broadcast |
+| Registry table + manual SQL | Support-ledger wallet RPC or broadcast |
 | Read-only admin JSON | Automatic payout execution |
 | Status workflow | On-chain address proof in SQL |
 
 **Warnings:**
 
 - Inserting a row **does not send coins**.
-- This tooling **does not call `azc`**.
+- Support-node services **do not call `azc`**; operators may use `azc` on the SC node to verify ownership out of band (see [support-wallet-reward-listener-v0.md](../../payouts/docs/support-wallet-reward-listener-v0.md)).
 - Registry presence **does not prove wallet ownership**.
 - Verify address ownership **separately** before `status = 'active'`.
 
@@ -36,6 +42,7 @@ From the azpool checkout on the support node:
 ```bash
 cd /opt/azcoin-super/src/azpool/payouts
 psql "$DATABASE_URL" -f migrations/004_sc_node_payout_addresses.sql
+psql "$DATABASE_URL" -f migrations/005_sc_node_payout_addresses_retired_at.sql
 ```
 
 Verify:
@@ -97,6 +104,7 @@ Partial unique index allows only one active default per SC node.
 UPDATE sc_node_payout_addresses
 SET status = 'revoked',
     is_default = false,
+    retired_at = now(),
     updated_at = now()
 WHERE sc_node_id = 'sc-2'
   AND payout_address = '<SC2_PAYOUT_ADDRESS_PLACEHOLDER>';
@@ -138,6 +146,7 @@ Example output:
       "status": "pending_verification",
       "is_default": false,
       "verified_at": null,
+      "retired_at": null,
       "created_at": "2026-05-19T12:00:00+00:00",
       "updated_at": "2026-05-19T12:00:00+00:00"
     }

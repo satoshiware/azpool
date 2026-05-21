@@ -73,6 +73,52 @@ def test_invalid_source_rejected() -> None:
         )
 
 
+def test_build_manual_register_record_defaults() -> None:
+    record = payout_addresses.build_manual_register_record(
+        sc_node_id="sc-2",
+        payout_address="  addr1  ",
+        label="primary",
+    )
+    assert record == {
+        "sc_node_id": "sc-2",
+        "payout_address": "addr1",
+        "status": "pending_verification",
+        "address_source": "manual",
+        "is_default": False,
+        "label": "primary",
+    }
+
+
+def test_build_manual_register_record_rejects_invalid_default() -> None:
+    with pytest.raises(ValueError, match="is_default requires status active"):
+        payout_addresses.build_manual_register_record(
+            sc_node_id="sc-2",
+            payout_address="addr1",
+            is_default=True,
+            status="pending_verification",
+        )
+
+
+def test_migration_enforces_one_active_default_per_sc_node() -> None:
+    migration = (AZPOOL_ROOT / "payouts/migrations/004_sc_node_payout_addresses.sql").read_text(
+        encoding="utf-8"
+    )
+    assert "idx_sc_node_payout_addresses_one_active_default" in migration
+    assert "is_default = true AND status = 'active'" in migration
+    assert "UNIQUE" in migration
+
+
+def test_migration_includes_retired_at_column() -> None:
+    migration_004 = (AZPOOL_ROOT / "payouts/migrations/004_sc_node_payout_addresses.sql").read_text(
+        encoding="utf-8"
+    )
+    migration_005 = (AZPOOL_ROOT / "payouts/migrations/005_sc_node_payout_addresses_retired_at.sql").read_text(
+        encoding="utf-8"
+    )
+    assert "retired_at TIMESTAMPTZ" in migration_004
+    assert "ADD COLUMN IF NOT EXISTS retired_at" in migration_005
+
+
 def test_default_requires_active_status() -> None:
     with pytest.raises(ValueError, match="is_default requires status active"):
         payout_addresses.validate_payout_address_record(
@@ -86,6 +132,7 @@ def test_default_requires_active_status() -> None:
 
 def test_build_sc_node_payout_addresses_sql_is_select_only() -> None:
     sql = payout_addresses.build_sc_node_payout_addresses_sql(include_inactive=True)
+    assert "retired_at" in sql
     assert "sc_node_payout_addresses" in sql
     assert "LEFT JOIN sc_nodes" in sql
     _assert_readonly_sql(sql)
@@ -119,10 +166,12 @@ def test_row_to_payout_address_dict_serializes_types() -> None:
             "status": "active",
             "is_default": 1,
             "verified_at": observed,
+            "retired_at": None,
             "created_at": observed,
             "updated_at": observed,
         }
     )
+    assert result["retired_at"] is None
     assert result["is_default"] is True
     assert isinstance(result["is_default"], bool)
     assert result["verified_at"] == observed.isoformat()

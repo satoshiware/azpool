@@ -30,6 +30,7 @@ class ScNodePayoutAddress:
     status: str
     is_default: bool
     verified_at: datetime | None
+    retired_at: datetime | None
     created_at: datetime | None
     updated_at: datetime | None
 
@@ -67,6 +68,33 @@ def validate_payout_address_record(
         raise ValueError("is_default requires status active")
 
 
+def build_manual_register_record(
+    *,
+    sc_node_id: str,
+    payout_address: str,
+    status: str = "pending_verification",
+    address_source: str = "manual",
+    is_default: bool = False,
+    label: str | None = None,
+) -> dict[str, str | bool | None]:
+    """Build validated metadata for manual INSERT (registry only; no DB write)."""
+    validate_payout_address_record(
+        sc_node_id=sc_node_id,
+        payout_address=payout_address,
+        status=status,
+        address_source=address_source,
+        is_default=is_default,
+    )
+    return {
+        "sc_node_id": str(sc_node_id).strip(),
+        "payout_address": normalize_payout_address(payout_address),
+        "status": status,
+        "address_source": address_source,
+        "is_default": is_default,
+        "label": label,
+    }
+
+
 def build_sc_node_payout_addresses_sql(*, include_inactive: bool = True) -> str:
     inactive_filter = ""
     if not include_inactive:
@@ -82,6 +110,7 @@ SELECT
   a.status,
   a.is_default,
   a.verified_at,
+  a.retired_at,
   a.created_at,
   a.updated_at
 FROM sc_node_payout_addresses a
@@ -104,6 +133,7 @@ SELECT
   a.status,
   a.is_default,
   a.verified_at,
+  a.retired_at,
   a.created_at,
   a.updated_at
 FROM sc_node_payout_addresses a
@@ -148,6 +178,7 @@ def row_to_payout_address_dict(row: Mapping[str, Any]) -> dict[str, Any]:
         "status": row.get("status"),
         "is_default": _to_bool(row.get("is_default")),
         "verified_at": _serialize_datetime(row.get("verified_at")),
+        "retired_at": _serialize_datetime(row.get("retired_at")),
         "created_at": _serialize_datetime(row.get("created_at")),
         "updated_at": _serialize_datetime(row.get("updated_at")),
     }

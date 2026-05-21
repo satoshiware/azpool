@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS sc_node_payout_addresses (
   status TEXT NOT NULL DEFAULT 'pending_verification',
   is_default BOOLEAN NOT NULL DEFAULT false,
   verified_at TIMESTAMPTZ,
+  retired_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   CONSTRAINT sc_node_payout_addresses_payout_address_not_empty
