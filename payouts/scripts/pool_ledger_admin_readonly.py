@@ -35,6 +35,10 @@ _COMMANDS: dict[str, tuple[str, object]] = {
         admin_readonly.build_reward_events_sql,
         admin_readonly.row_to_reward_event_dict,
     ),
+    "credit-runs": (
+        admin_readonly.build_credit_runs_sql,
+        admin_readonly.row_to_credit_run_dict,
+    ),
 }
 
 
@@ -48,8 +52,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "mappings",
             "payout-addresses",
             "reward-events",
+            "credit-runs",
+            "credit-run-details",
             "unmapped-identities",
         ],
+    )
+    parser.add_argument(
+        "--credit-run-id",
+        type=int,
+        default=None,
+        help="Credit run id for credit-run-details",
     )
     parser.add_argument(
         "--limit",
@@ -83,7 +95,31 @@ def main(argv: list[str] | None = None) -> int:
         print("DATABASE_URL is required", file=sys.stderr)
         return 1
 
-    if args.command == "unmapped-identities":
+    if args.command == "credit-run-details":
+        if args.credit_run_id is None:
+            print("--credit-run-id is required for credit-run-details", file=sys.stderr)
+            return 1
+        run_sql = admin_readonly.build_credit_run_details_sql(args.credit_run_id)
+        credits_sql = admin_readonly.build_credit_run_credits_sql(args.credit_run_id)
+        events_sql = admin_readonly.build_credit_run_events_sql(args.credit_run_id)
+        run_rows = _run_query(database_url, run_sql, admin_readonly.row_to_credit_run_dict)
+        if not run_rows:
+            print(f"credit run not found: {args.credit_run_id}", file=sys.stderr)
+            return 1
+        credits = _run_query(database_url, credits_sql, admin_readonly.row_to_credit_dict)
+        events = _run_query(
+            database_url,
+            events_sql,
+            admin_readonly.row_to_credit_run_event_dict,
+        )
+        payload = {
+            "command": args.command,
+            "credit_run_id": args.credit_run_id,
+            "credit_run": run_rows[0],
+            "credits": credits,
+            "reward_events": events,
+        }
+    elif args.command == "unmapped-identities":
         limit = admin_readonly.clamp_unmapped_limit(args.limit)
         sql = admin_readonly.build_unmapped_identities_sql(limit)
         rows = _run_query(database_url, sql, admin_readonly.row_to_unmapped_identity_dict)

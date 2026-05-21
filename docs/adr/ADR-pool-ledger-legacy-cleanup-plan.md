@@ -67,7 +67,15 @@ Findings:
 - Audit inbound counts **exclude** generated/cache files (`__pycache__/`, `.pytest_cache/`, `.pyc`, `.pyo`, `.so`, `.git/`, `.venv/`).
 - **Do not quarantine** `payouts/app` until replacement SC-node payout-credit design (PR G–I), translator runtime ownership is decided, and production verification complete.
 
-**Next architectural step:** SC-node credit ledger (PR I) after PR G (payout address registry) and PR H (read-only support-wallet reward listener). Future removal/quarantine of `payouts/app` requires credit ledger (PR I+) and verified no production dependency.
+**Next architectural step:** Payout plan generator (PR J) after PR I (SC-node credit ledger). Future removal/quarantine of `payouts/app` requires payout-plan/execution path (PR J+) and verified no production dependency.
+
+## PR I SC-node credit ledger decision
+
+PR I (`feature/sc-node-credit-ledger-v0`) adds draft SC-node credits from **mature** `support_wallet_reward_events` and mapped pool work (`observed_from` / `observed_to` overlap).
+
+- **No sends, no `azc`, no wallet balance checks** — reward events are gross history, not balance.
+- Operators must choose coverage windows; `write-draft` requires explicit bounds or `--allow-default-coverage`.
+- See [ADR-sc-node-credit-ledger.md](ADR-sc-node-credit-ledger.md) and [sc-node-credit-ledger.md](../runbooks/sc-node-credit-ledger.md).
 
 ## PR H support-wallet reward listener decision
 
@@ -171,6 +179,6 @@ See the full matrix in [payout-ledger-file-inventory.md](../inventory/payout-led
 | **PR F** | `payouts/app` dependency audit + boundary README — no moves |
 | **PR G** | SC-node payout address registry (schema + read-only admin) |
 | **PR H** | Read-only support-wallet reward listener |
-| **PR I** | SC-node credit ledger (no wallet sends) |
-| **PR J** | Payout plan generator (no wallet sends) |
+| **PR I** | SC-node credit ledger (no wallet sends) — **merged/in progress** |
+| **PR J** | Payout plan generator (no wallet sends) — **next** |
 | **PR K** | Guarded dry-run wallet payout execution (separate approval) |
