@@ -39,6 +39,10 @@ _COMMANDS: dict[str, tuple[str, object]] = {
         admin_readonly.build_credit_runs_sql,
         admin_readonly.row_to_credit_run_dict,
     ),
+    "payout-plans": (
+        admin_readonly.build_payout_plans_sql,
+        admin_readonly.row_to_payout_plan_dict,
+    ),
 }
 
 
@@ -54,6 +58,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "reward-events",
             "credit-runs",
             "credit-run-details",
+            "payout-plans",
+            "payout-plan-details",
             "unmapped-identities",
         ],
     )
@@ -62,6 +68,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=int,
         default=None,
         help="Credit run id for credit-run-details",
+    )
+    parser.add_argument(
+        "--payout-plan-id",
+        type=int,
+        default=None,
+        help="Payout plan id for payout-plan-details",
     )
     parser.add_argument(
         "--limit",
@@ -95,7 +107,28 @@ def main(argv: list[str] | None = None) -> int:
         print("DATABASE_URL is required", file=sys.stderr)
         return 1
 
-    if args.command == "credit-run-details":
+    if args.command == "payout-plan-details":
+        if args.payout_plan_id is None:
+            print("--payout-plan-id is required for payout-plan-details", file=sys.stderr)
+            return 1
+        plan_sql = admin_readonly.build_payout_plan_details_sql(args.payout_plan_id)
+        rows_sql = admin_readonly.build_payout_plan_rows_sql(args.payout_plan_id)
+        plan_rows = _run_query(database_url, plan_sql, admin_readonly.row_to_payout_plan_dict)
+        if not plan_rows:
+            print(f"payout plan not found: {args.payout_plan_id}", file=sys.stderr)
+            return 1
+        plan_row_details = _run_query(
+            database_url,
+            rows_sql,
+            admin_readonly.row_to_payout_plan_row_dict,
+        )
+        payload = {
+            "command": args.command,
+            "payout_plan_id": args.payout_plan_id,
+            "payout_plan": plan_rows[0],
+            "rows": plan_row_details,
+        }
+    elif args.command == "credit-run-details":
         if args.credit_run_id is None:
             print("--credit-run-id is required for credit-run-details", file=sys.stderr)
             return 1

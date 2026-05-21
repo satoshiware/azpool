@@ -108,6 +108,24 @@ def test_admin_command_map_includes_credit_commands() -> None:
     assert args.credit_run_id == 1
 
 
+def test_payout_plans_sql_is_select_only() -> None:
+    sql = admin_readonly.build_payout_plans_sql()
+    assert "sc_node_payout_plans" in sql
+    admin_readonly.assert_readonly_sql(sql)
+
+
+def test_admin_command_map_includes_payout_plan_commands() -> None:
+    from payouts.scripts import pool_ledger_admin_readonly as admin_cli
+
+    assert "payout-plans" in admin_cli._COMMANDS
+    build_sql, row_fn = admin_cli._COMMANDS["payout-plans"]
+    assert build_sql() == admin_readonly.build_payout_plans_sql()
+    assert row_fn is admin_readonly.row_to_payout_plan_dict
+    args = admin_cli._parse_args(["payout-plan-details", "--payout-plan-id", "1"])
+    assert args.command == "payout-plan-details"
+    assert args.payout_plan_id == 1
+
+
 def test_credit_run_dict_includes_required_fields() -> None:
     result = admin_readonly.row_to_credit_run_dict(
         {
