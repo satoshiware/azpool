@@ -36,20 +36,25 @@ Columns: **Path** | **Classification** | **Reason** | **Evidence** | **Proposed 
 | `payouts/collector/app/admin_readonly.py` | ACTIVE | Read-only admin SQL builders | Used by `pool_ledger_admin_readonly.py` | Keep | Medium | Admin readonly tests |
 | `payouts/collector/app/payout_addresses.py` | ACTIVE | SC-node payout address registry SQL/validation (PR G) | Used by admin `payout-addresses` | Keep | Medium | Payout address tests |
 | `payouts/collector/app/reward_events.py` | ACTIVE | Support-wallet reward event normalization/SQL (PR H) | Used by scan + admin `reward-events` | Keep | Medium | Reward event tests |
+| `payouts/collector/app/sc_node_credit_ledger.py` | ACTIVE | SC-node credit ledger SQL/allocation (PR I) | Used by credit CLI + admin | Keep | Medium | Credit ledger tests |
 | `payouts/collector/tests/*` | ACTIVE | Collector/reporting unit tests | No legacy payout imports | Keep | Medium | `pytest payouts/collector/tests` |
 | `payouts/scripts/sc_node_work_summary.py` | ACTIVE | Read-only SC-node JSON report | Documented in runbooks | Keep | Low | Manual JSON smoke |
 | `payouts/scripts/pool_ledger_admin_readonly.py` | ACTIVE | Read-only admin CLI | Documented in runbooks | Keep | Low | Admin CLI smoke |
 | `payouts/scripts/support_wallet_reward_events.py` | ACTIVE | Support-wallet reward scan/print (PR H) | `azc listtransactions` only | Keep | Medium | Dry-run + admin smoke |
+| `payouts/scripts/sc_node_credit_ledger.py` | ACTIVE | SC-node credit preview/write/print (PR I) | No `azc`; explicit coverage for writes | Keep | Medium | Preview + write-draft smoke |
 | `payouts/scripts/inventory_payout_ledger_files.py` | ACTIVE | PR D inventory helper (read-only scan) | This PR | Keep | Low | Inventory tests |
 | `payouts/migrations/001_pool_telemetry_collector.sql` | ACTIVE | Telemetry schema | Applied on support node | Keep | High | `\dt pool_*` |
 | `payouts/migrations/002_sc_node_identity_mapping.sql` | ACTIVE | SC nodes + mappings | Applied on support node | Keep | High | `\dt sc_*` |
 | `payouts/migrations/003_pool_instance_registry.sql` | ACTIVE | DB pool registry | Applied on support node | Keep | High | `pool_instances` query |
 | `payouts/migrations/004_sc_node_payout_addresses.sql` | ACTIVE | SC-node payout address registry (PR G) | Manual apply; no payout execution | Keep | High | `\d sc_node_payout_addresses` |
 | `payouts/migrations/005_support_wallet_reward_events.sql` | ACTIVE | Support-wallet reward events (PR H) | Manual apply; observe only | Keep | High | `\d support_wallet_reward_events` |
+| `payouts/migrations/006_sc_node_credit_ledger.sql` | ACTIVE | SC-node draft credit ledger (PR I) | Manual apply; no sends | Keep | High | `\d sc_node_reward_credit_runs` |
 | `docs/runbooks/pool-monitoring-collector.md` | ACTIVE | Collector operations | Linked from README | Keep | Low | Ops review |
 | `docs/runbooks/pool-ledger-admin.md` | ACTIVE | Read-only admin ops | Linked from README | Keep | Low | Ops review |
 | `docs/runbooks/sc-node-payout-addresses.md` | ACTIVE | Payout address registry ops (PR G) | Linked from README/ADR | Keep | Low | Ops review |
 | `docs/runbooks/support-wallet-reward-listener.md` | ACTIVE | Support-wallet reward listener ops (PR H) | Linked from README/ADR | Keep | Low | Ops review |
+| `docs/runbooks/sc-node-credit-ledger.md` | ACTIVE | SC-node credit ledger ops (PR I) | Linked from README/ADR | Keep | Low | Ops review |
+| `docs/adr/ADR-sc-node-credit-ledger.md` | ACTIVE | Credit ledger architecture ADR (PR I) | PR I | Keep | Low | ADR review |
 | `docs/adr/ADR-support-wallet-reward-listener.md` | ACTIVE | Reward listener architecture ADR (PR H) | PR H | Keep | Low | ADR review |
 | `docs/adr/ADR-support-node-pool-telemetry-collector.md` | ACTIVE | Collector architecture ADR | ADR index | Keep | Low | ADR review |
 | `docs/adr/ADR-sc-node-payout-address-registry.md` | ACTIVE | Payout address registry ADR (PR G) | PR G | Keep | Low | ADR review |
@@ -164,7 +169,7 @@ PYTHONPATH=/opt/azcoin-super/src/azpool .venv/bin/python -m pytest payouts/colle
 | **PR F** (`feature/payout-app-dependency-audit-v0`) | `payouts/app` dependency audit + boundary README — no moves | **No** |
 | **PR G** (`feature/sc-node-payout-address-registry-v0`) | SC-node payout address registry — schema + read-only admin | **No** |
 | **PR H** | Read-only support-wallet reward listener | **Yes** (PR H) |
-| **PR I** | SC-node credit ledger (no wallet sends) | **No** |
+| **PR I** | SC-node credit ledger (no wallet sends) | **Yes** (PR I) |
 | **PR J** | Payout plan generator (no wallet sends) | **No** |
 | **PR K** | Guarded dry-run wallet payout execution (separate approval) | TBD |
 

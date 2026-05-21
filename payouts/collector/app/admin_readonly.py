@@ -5,7 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any, Mapping
 
-from payouts.collector.app import payout_addresses, reward_events
+from payouts.collector.app import payout_addresses, reward_events, sc_node_credit_ledger
 
 MIN_UNMAPPED_LIMIT = 1
 MAX_UNMAPPED_LIMIT = 500
@@ -119,6 +119,34 @@ def build_reward_events_sql(maturity_status: str | None = None) -> str:
 
 def row_to_reward_event_dict(row: Mapping[str, Any]) -> dict[str, Any]:
     return reward_events.row_to_reward_event_dict(row, include_raw=False)
+
+
+def build_credit_runs_sql() -> str:
+    return sc_node_credit_ledger.build_credit_runs_sql()
+
+
+def build_credit_run_details_sql(credit_run_id: int) -> str:
+    return sc_node_credit_ledger.build_credit_run_details_sql(credit_run_id)
+
+
+def build_credit_run_credits_sql(credit_run_id: int) -> str:
+    return sc_node_credit_ledger.build_credit_run_credits_sql(credit_run_id)
+
+
+def build_credit_run_events_sql(credit_run_id: int) -> str:
+    return sc_node_credit_ledger.build_credit_run_events_sql(credit_run_id)
+
+
+def row_to_credit_run_dict(row: Mapping[str, Any]) -> dict[str, Any]:
+    return sc_node_credit_ledger.row_to_credit_run_dict(row)
+
+
+def row_to_credit_dict(row: Mapping[str, Any]) -> dict[str, Any]:
+    return sc_node_credit_ledger.row_to_credit_dict(row)
+
+
+def row_to_credit_run_event_dict(row: Mapping[str, Any]) -> dict[str, Any]:
+    return sc_node_credit_ledger.row_to_credit_run_event_dict(row)
 
 
 def _serialize_datetime(value: datetime | None) -> str | None:

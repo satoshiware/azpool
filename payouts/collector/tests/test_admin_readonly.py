@@ -90,6 +90,52 @@ def test_admin_command_map_includes_reward_events() -> None:
     assert row_fn is admin_readonly.row_to_reward_event_dict
 
 
+def test_credit_runs_sql_is_select_only() -> None:
+    sql = admin_readonly.build_credit_runs_sql()
+    assert "sc_node_reward_credit_runs" in sql
+    admin_readonly.assert_readonly_sql(sql)
+
+
+def test_admin_command_map_includes_credit_commands() -> None:
+    from payouts.scripts import pool_ledger_admin_readonly as admin_cli
+
+    assert "credit-runs" in admin_cli._COMMANDS
+    build_sql, row_fn = admin_cli._COMMANDS["credit-runs"]
+    assert build_sql() == admin_readonly.build_credit_runs_sql()
+    assert row_fn is admin_readonly.row_to_credit_run_dict
+    args = admin_cli._parse_args(["credit-run-details", "--credit-run-id", "1"])
+    assert args.command == "credit-run-details"
+    assert args.credit_run_id == 1
+
+
+def test_credit_run_dict_includes_required_fields() -> None:
+    result = admin_readonly.row_to_credit_run_dict(
+        {
+            "id": 1,
+            "run_label": "manual",
+            "wallet_name": "SUPPORT",
+            "maturity_status": "mature",
+            "coverage_start": datetime(2026, 5, 1, tzinfo=timezone.utc),
+            "coverage_end": datetime(2026, 5, 2, tzinfo=timezone.utc),
+            "reward_event_count": 2,
+            "reward_amount_total": Decimal("1.5"),
+            "mapped_work_total": Decimal("9"),
+            "unmapped_work_total": Decimal("1"),
+            "status": "draft",
+            "notes": None,
+            "created_at": None,
+            "updated_at": None,
+        }
+    )
+    assert result["coverage_start"] is not None
+    assert result["coverage_end"] is not None
+    assert result["reward_event_count"] == 2
+    assert result["reward_amount_total"] == "1.5"
+    assert result["mapped_work_total"] == "9"
+    assert result["unmapped_work_total"] == "1"
+    assert "user_identity" not in result
+
+
 def test_reward_event_dict_hides_raw_wallet_event() -> None:
     result = admin_readonly.row_to_reward_event_dict(
         {

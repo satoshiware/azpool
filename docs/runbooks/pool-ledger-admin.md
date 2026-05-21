@@ -13,6 +13,7 @@ Operators and `azledger` need safe JSON views of:
 - How `user_identity` values map to `sc_node_id`
 - Registered SC-node payout addresses (registry only — not execution)
 - Stored support-wallet reward events (observe-only — not execution)
+- SC-node draft credit runs and per-node credits (no payout execution)
 - Which identities still have unmapped telemetry deltas (unpaid)
 
 Architecture reminder:
@@ -31,6 +32,7 @@ Architecture reminder:
 | `unmapped-identities` shows `user_identity` for mapping work | Default payout reports exposing `user_identity` |
 | `payout-addresses` lists registry rows | Sending coins or proving on-chain ownership |
 | `reward-events` lists stored wallet reward rows | Wallet sends, signing, broadcast, payout plans |
+| `credit-runs` / `credit-run-details` list draft SC-node credits | Wallet RPC, `azc`, payout execution |
 
 **Strong warning:** These commands are admin visibility only. They do **not** move money, create payout batches, or invoke AZCoin Core wallet RPC.
 
@@ -56,10 +58,14 @@ PYTHONPATH=/opt/azcoin-super/src/azpool .venv/bin/python payouts/scripts/pool_le
 PYTHONPATH=/opt/azcoin-super/src/azpool .venv/bin/python payouts/scripts/pool_ledger_admin_readonly.py payout-addresses
 PYTHONPATH=/opt/azcoin-super/src/azpool .venv/bin/python payouts/scripts/pool_ledger_admin_readonly.py reward-events
 PYTHONPATH=/opt/azcoin-super/src/azpool .venv/bin/python payouts/scripts/pool_ledger_admin_readonly.py reward-events --maturity-status mature
+PYTHONPATH=/opt/azcoin-super/src/azpool .venv/bin/python payouts/scripts/pool_ledger_admin_readonly.py credit-runs
+PYTHONPATH=/opt/azcoin-super/src/azpool .venv/bin/python payouts/scripts/pool_ledger_admin_readonly.py credit-run-details --credit-run-id 1
 PYTHONPATH=/opt/azcoin-super/src/azpool .venv/bin/python payouts/scripts/pool_ledger_admin_readonly.py unmapped-identities --limit 50
 ```
 
 Reward-event scanning (uses read-only `azc listtransactions`, optional DB write) is documented in [support-wallet-reward-listener.md](support-wallet-reward-listener.md). Admin `reward-events` is **DB read-only** and does not call `azc`.
+
+SC-node credit preview/write is documented in [sc-node-credit-ledger.md](sc-node-credit-ledger.md). Admin credit commands are **DB read-only** and do not call `azc` or inspect wallet balances.
 
 ### Example: pool-instances
 
