@@ -74,6 +74,36 @@ def test_admin_command_map_includes_payout_addresses() -> None:
     assert row_fn is admin_readonly.row_to_payout_address_dict
 
 
+def test_reward_events_sql_is_select_only() -> None:
+    sql = admin_readonly.build_reward_events_sql()
+    assert "support_wallet_reward_events" in sql
+    assert "raw_wallet_event" not in sql
+    admin_readonly.assert_readonly_sql(sql)
+
+
+def test_admin_command_map_includes_reward_events() -> None:
+    from payouts.scripts import pool_ledger_admin_readonly as admin_cli
+
+    assert "reward-events" in admin_cli._COMMANDS
+    build_sql, row_fn = admin_cli._COMMANDS["reward-events"]
+    assert build_sql(None) == admin_readonly.build_reward_events_sql()
+    assert row_fn is admin_readonly.row_to_reward_event_dict
+
+
+def test_reward_event_dict_hides_raw_wallet_event() -> None:
+    result = admin_readonly.row_to_reward_event_dict(
+        {
+            "id": 1,
+            "txid": "abc",
+            "amount": Decimal("1"),
+            "confirmations": 2,
+            "maturity_status": "mature",
+            "raw_wallet_event": {"txid": "abc"},
+        }
+    )
+    assert "raw_wallet_event" not in result
+
+
 def test_unmapped_identities_sql_filters_null_sc_node_id() -> None:
     sql = admin_readonly.build_unmapped_identities_sql(limit=20)
     assert "sc_node_id IS NULL" in sql
