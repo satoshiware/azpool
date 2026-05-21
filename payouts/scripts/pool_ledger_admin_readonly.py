@@ -43,6 +43,10 @@ _COMMANDS: dict[str, tuple[str, object]] = {
         admin_readonly.build_payout_plans_sql,
         admin_readonly.row_to_payout_plan_dict,
     ),
+    "payout-test-executions": (
+        admin_readonly.build_payout_test_executions_sql,
+        admin_readonly.row_to_payout_test_execution_dict,
+    ),
 }
 
 
@@ -60,6 +64,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "credit-run-details",
             "payout-plans",
             "payout-plan-details",
+            "payout-test-executions",
+            "payout-test-execution-details",
             "unmapped-identities",
         ],
     )
@@ -74,6 +80,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=int,
         default=None,
         help="Payout plan id for payout-plan-details",
+    )
+    parser.add_argument(
+        "--test-execution-id",
+        type=int,
+        default=None,
+        help="Test execution id for payout-test-execution-details",
     )
     parser.add_argument(
         "--limit",
@@ -107,7 +119,39 @@ def main(argv: list[str] | None = None) -> int:
         print("DATABASE_URL is required", file=sys.stderr)
         return 1
 
-    if args.command == "payout-plan-details":
+    if args.command == "payout-test-execution-details":
+        if args.test_execution_id is None:
+            print(
+                "--test-execution-id is required for payout-test-execution-details",
+                file=sys.stderr,
+            )
+            return 1
+        header_sql = admin_readonly.build_payout_test_execution_details_sql(
+            args.test_execution_id
+        )
+        rows_sql = admin_readonly.build_payout_test_execution_rows_sql(
+            args.test_execution_id
+        )
+        header_rows = _run_query(
+            database_url,
+            header_sql,
+            admin_readonly.row_to_payout_test_execution_dict,
+        )
+        if not header_rows:
+            print(f"test execution not found: {args.test_execution_id}", file=sys.stderr)
+            return 1
+        row_details = _run_query(
+            database_url,
+            rows_sql,
+            admin_readonly.row_to_payout_test_execution_row_dict,
+        )
+        payload = {
+            "command": args.command,
+            "test_execution_id": args.test_execution_id,
+            "test_execution": header_rows[0],
+            "rows": row_details,
+        }
+    elif args.command == "payout-plan-details":
         if args.payout_plan_id is None:
             print("--payout-plan-id is required for payout-plan-details", file=sys.stderr)
             return 1
