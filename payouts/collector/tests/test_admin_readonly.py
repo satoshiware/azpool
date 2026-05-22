@@ -139,6 +139,26 @@ def test_production_preflights_sql_is_select_only() -> None:
     admin_readonly.assert_readonly_sql(sql)
 
 
+def test_production_executions_sql_is_select_only() -> None:
+    sql = admin_readonly.build_production_executions_sql()
+    assert "sc_node_payout_production_executions" in sql
+    admin_readonly.assert_readonly_sql(sql)
+
+
+def test_admin_command_map_includes_production_execution_commands() -> None:
+    from payouts.scripts import pool_ledger_admin_readonly as admin_cli
+
+    assert "production-executions" in admin_cli._COMMANDS
+    build_sql, row_fn = admin_cli._COMMANDS["production-executions"]
+    assert build_sql() == admin_readonly.build_production_executions_sql()
+    assert row_fn is admin_readonly.row_to_production_execution_dict
+    args = admin_cli._parse_args(
+        ["production-execution-details", "--production-execution-id", "1"]
+    )
+    assert args.command == "production-execution-details"
+    assert args.production_execution_id == 1
+
+
 def test_admin_command_map_includes_production_preflight_commands() -> None:
     from payouts.scripts import pool_ledger_admin_readonly as admin_cli
 
