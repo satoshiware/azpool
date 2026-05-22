@@ -51,6 +51,10 @@ _COMMANDS: dict[str, tuple[str, object]] = {
         admin_readonly.build_production_preflights_sql,
         admin_readonly.row_to_production_preflight_dict,
     ),
+    "production-executions": (
+        admin_readonly.build_production_executions_sql,
+        admin_readonly.row_to_production_execution_dict,
+    ),
 }
 
 
@@ -72,6 +76,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "payout-test-execution-details",
             "production-preflights",
             "production-preflight-details",
+            "production-executions",
+            "production-execution-details",
             "unmapped-identities",
         ],
     )
@@ -98,6 +104,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         type=int,
         default=None,
         help="Production preflight id for production-preflight-details",
+    )
+    parser.add_argument(
+        "--production-execution-id",
+        type=int,
+        default=None,
+        help="Production execution id for production-execution-details",
     )
     parser.add_argument(
         "--limit",
@@ -131,7 +143,42 @@ def main(argv: list[str] | None = None) -> int:
         print("DATABASE_URL is required", file=sys.stderr)
         return 1
 
-    if args.command == "production-preflight-details":
+    if args.command == "production-execution-details":
+        if args.production_execution_id is None:
+            print(
+                "--production-execution-id is required for production-execution-details",
+                file=sys.stderr,
+            )
+            return 1
+        header_sql = admin_readonly.build_production_execution_details_sql(
+            args.production_execution_id
+        )
+        rows_sql = admin_readonly.build_production_execution_rows_sql(
+            args.production_execution_id
+        )
+        header_rows = _run_query(
+            database_url,
+            header_sql,
+            admin_readonly.row_to_production_execution_dict,
+        )
+        if not header_rows:
+            print(
+                f"production execution not found: {args.production_execution_id}",
+                file=sys.stderr,
+            )
+            return 1
+        row_details = _run_query(
+            database_url,
+            rows_sql,
+            admin_readonly.row_to_production_execution_row_dict,
+        )
+        payload = {
+            "command": args.command,
+            "production_execution_id": args.production_execution_id,
+            "production_execution": header_rows[0],
+            "rows": row_details,
+        }
+    elif args.command == "production-preflight-details":
         if args.production_preflight_id is None:
             print(
                 "--production-preflight-id is required for production-preflight-details",
