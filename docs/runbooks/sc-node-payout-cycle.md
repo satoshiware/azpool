@@ -39,6 +39,7 @@ Deep links:
 | Regtest executor | [sc-node-payout-test-executor.md](../payouts/docs/sc-node-payout-test-executor.md) |
 | Production preflight | [sc-node-production-payout-preflight.md](../payouts/docs/sc-node-production-payout-preflight.md) |
 | Production execute | [sc-node-production-payout-executor.md](../payouts/docs/sc-node-production-payout-executor.md) |
+| Chunked production execute | [sc-node-production-payout-chunked-executor.md](../payouts/docs/sc-node-production-payout-chunked-executor.md) |
 | Reconciliation | [sc-node-payout-reconciliation.md](../payouts/docs/sc-node-payout-reconciliation.md) |
 | Admin JSON | [pool-ledger-admin.md](pool-ledger-admin.md) |
 
@@ -211,6 +212,27 @@ See [sc-node-production-payout-preflight.md](../payouts/docs/sc-node-production-
 Production send uses `/usr/local/bin/azc-payout` (or documented `--azc-bin`) — **`sendtoaddress` only**.
 
 See [sc-node-production-payout-executor.md](../payouts/docs/sc-node-production-payout-executor.md).
+
+### 7b. Chunked `execute-real` (UTXO fragmentation)
+
+Use when single-send execution is **`refused`** (e.g. `Transaction too large`) and wallet UTXOs are highly fragmented. **Does not modify** the refused execution row.
+
+- [ ] Apply migration `013` if not already applied
+- [ ] Chunked `preview` with `--chunk-amount` (plan #2 example: `25` → 9 chunks):
+  ```bash
+  .venv/bin/python payouts/scripts/sc_node_payout_production_chunked_executor.py preview \
+    --payout-plan-id PAYOUT_PLAN_ID \
+    --production-preflight-id PRODUCTION_PREFLIGHT_ID \
+    --source-wallet-name wallet \
+    --chunk-amount 25 \
+    --azc-bin /usr/local/bin/azc-payout-readonly
+  ```
+- [ ] Use exact chunked phrase from preview, e.g. `SEND CHUNKED 223.125000000000 FROM wallet FOR PLAN 2 IN 9 CHUNKS`
+- [ ] Chunked `execute-real` with **new** `IDEMPOTENCY_KEY` (not the single-send key)
+- [ ] On partial failure: status `partial_sent` — **stop**; do not rerun execute-real; investigate before resuming
+- [ ] `details` / admin `production-chunked-execution-details` lists per-chunk txids
+
+See [sc-node-production-payout-chunked-executor.md](../payouts/docs/sc-node-production-payout-chunked-executor.md).
 
 ---
 

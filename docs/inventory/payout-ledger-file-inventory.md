@@ -50,7 +50,13 @@ Columns: **Path** | **Classification** | **Reason** | **Evidence** | **Proposed 
 | `payouts/migrations/005_support_wallet_reward_events.sql` | ACTIVE | Support-wallet reward events (PR H) | Manual apply; observe only | Keep | High | `\d support_wallet_reward_events` |
 | `payouts/migrations/006_sc_node_credit_ledger.sql` | ACTIVE | SC-node draft credit ledger (PR I) | Manual apply; no sends | Keep | High | `\d sc_node_reward_credit_runs` |
 | `payouts/migrations/007–012_sc_node_payout_*.sql` | ACTIVE | Plans, approval, test/prod execution, reconciliation (PR J–O) | Manual apply per PR | Keep | **Critical** | Per-migration `\d` smoke |
+| `payouts/migrations/013_sc_node_payout_production_execution_chunks.sql` | ACTIVE | Chunked production execution chunks (PR S) | Manual apply; UTXO fragmentation path | Keep | **Critical** | `\d sc_node_payout_production_execution_chunks` |
 | `payouts/scripts/sc_node_payout_*.py` | ACTIVE | Planner, review, test/prod executor, reconciliation CLIs | Manual operator-triggered; prod send only in executor | Keep | **Critical** | `pytest payouts/collector/tests` |
+| `payouts/scripts/sc_node_payout_production_chunked_executor.py` | ACTIVE | Chunked production sendtoaddress sequence (PR S) | After single-send refused (tx too large) | Keep | **Critical** | Preview + dry-run argv tests |
+| `payouts/collector/app/sc_node_payout_production_chunked_executor.py` | ACTIVE | Chunk split/SQL/guardrails (PR S) | Chunked CLI + admin chunks | Keep | Medium | Chunked executor tests |
+| `docs/runbooks/sc-node-payout-cycle.md` | ACTIVE | End-to-end payout cycle checklist (PR R) | Linked from README | Keep | Low | Ops walkthrough |
+| `docs/adr/ADR-sc-node-production-payout-chunked-executor.md` | ACTIVE | Chunked executor ADR (PR S) | PR S | Keep | Low | ADR review |
+| `payouts/docs/sc-node-production-payout-chunked-executor.md` | ACTIVE | Chunked executor ops doc (PR S) | PR S | Keep | Low | Ops review |
 | `docs/runbooks/sc-node-payout-cycle.md` | ACTIVE | End-to-end payout cycle operator checklist (PR R) | Linked from README | Keep | Low | Ops walkthrough |
 | `docs/runbooks/pool-monitoring-collector.md` | ACTIVE | Collector operations | Linked from README | Keep | Low | Ops review |
 | `docs/runbooks/pool-ledger-admin.md` | ACTIVE | Read-only admin ops | Linked from README | Keep | Low | Ops review |

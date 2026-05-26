@@ -13,6 +13,7 @@ from payouts.collector.app import (
     sc_node_payout_planner,
     sc_node_payout_production_executor,
     sc_node_payout_production_preflight,
+    sc_node_payout_production_chunked_executor,
     sc_node_payout_reconciliation,
     sc_node_payout_test_executor,
 )
@@ -245,6 +246,18 @@ def row_to_production_execution_dict(row: Mapping[str, Any]) -> dict[str, Any]:
 
 def row_to_production_execution_row_dict(row: Mapping[str, Any]) -> dict[str, Any]:
     return sc_node_payout_production_executor.row_to_production_execution_row_dict(row)
+
+
+def build_production_execution_chunks_sql(production_execution_id: int) -> str:
+    return sc_node_payout_production_chunked_executor.build_production_execution_chunks_sql(
+        production_execution_id
+    )
+
+
+def row_to_production_execution_chunk_dict(row: Mapping[str, Any]) -> dict[str, Any]:
+    return sc_node_payout_production_chunked_executor.row_to_production_execution_chunk_dict(
+        row
+    )
 
 
 def build_payout_reconciliations_sql() -> str:

@@ -151,6 +151,26 @@ def test_payout_reconciliations_sql_is_select_only() -> None:
     admin_readonly.assert_readonly_sql(sql)
 
 
+def test_production_execution_chunks_sql_is_select_only() -> None:
+    sql = admin_readonly.build_production_execution_chunks_sql(2)
+    assert "sc_node_payout_production_execution_chunks" in sql
+    admin_readonly.assert_readonly_sql(sql)
+
+
+def test_admin_command_map_includes_production_chunked_execution_details() -> None:
+    from payouts.scripts import pool_ledger_admin_readonly as admin_cli
+
+    args = admin_cli._parse_args(
+        [
+            "production-chunked-execution-details",
+            "--production-execution-id",
+            "3",
+        ]
+    )
+    assert args.command == "production-chunked-execution-details"
+    assert args.production_execution_id == 3
+
+
 def test_admin_command_map_includes_payout_reconciliation_commands() -> None:
     from payouts.scripts import pool_ledger_admin_readonly as admin_cli
 
