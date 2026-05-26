@@ -59,6 +59,10 @@ _COMMANDS: dict[str, tuple[str, object]] = {
         admin_readonly.build_payout_reconciliations_sql,
         admin_readonly.row_to_payout_reconciliation_dict,
     ),
+    "chunked-payout-reconciliations": (
+        admin_readonly.build_chunked_payout_reconciliations_sql,
+        admin_readonly.row_to_chunked_payout_reconciliation_dict,
+    ),
 }
 
 
@@ -84,6 +88,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "production-execution-details",
             "payout-reconciliations",
             "payout-reconciliation-details",
+            "chunked-payout-reconciliations",
+            "chunked-payout-reconciliation-details",
             "production-chunked-execution-details",
             "unmapped-identities",
         ],
@@ -122,7 +128,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--reconciliation-id",
         type=int,
         default=None,
-        help="Reconciliation id for payout-reconciliation-details",
+        help="Reconciliation id for payout/chunked payout reconciliation details",
     )
     parser.add_argument(
         "--limit",
@@ -139,8 +145,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--include-raw-evidence",
         action="store_true",
         help=(
-            "Include full source_wallet_evidence hex for payout-reconciliations "
-            "and payout-reconciliation-details (default omits hex)"
+            "Include full source_wallet_evidence hex for reconciliation admin commands "
+            "(default omits hex)"
         ),
     )
     return parser.parse_args(argv)
@@ -209,6 +215,43 @@ def main(argv: list[str] | None = None) -> int:
             "rows": row_details,
             "chunks": chunk_details,
         }
+    elif args.command == "chunked-payout-reconciliation-details":
+        if args.reconciliation_id is None:
+            print(
+                "--reconciliation-id is required for chunked-payout-reconciliation-details",
+                file=sys.stderr,
+            )
+            return 1
+        header_sql = admin_readonly.build_chunked_payout_reconciliation_details_sql(
+            args.reconciliation_id
+        )
+        chunks_sql = admin_readonly.build_chunked_payout_reconciliation_chunks_sql(
+            args.reconciliation_id
+        )
+        row_fn = lambda row: admin_readonly.row_to_chunked_payout_reconciliation_dict(
+            row,
+            include_raw_evidence=args.include_raw_evidence,
+        )
+        header_rows = _run_query(database_url, header_sql, row_fn)
+        if not header_rows:
+            print(
+                f"chunked reconciliation not found: {args.reconciliation_id}",
+                file=sys.stderr,
+            )
+            return 1
+        chunk_details = _run_query(
+            database_url,
+            chunks_sql,
+            admin_readonly.row_to_chunked_payout_reconciliation_chunk_dict,
+        )
+        payload = {
+            "command": args.command,
+            "reconciliation_id": args.reconciliation_id,
+            "reconciliation": header_rows[0],
+            "chunks": chunk_details,
+        }
+        if args.include_raw_evidence:
+            payload["include_raw_evidence"] = True
     elif args.command == "payout-reconciliation-details":
         if args.reconciliation_id is None:
             print(
@@ -413,11 +456,19 @@ def main(argv: list[str] | None = None) -> int:
                 row,
                 include_raw_evidence=args.include_raw_evidence,
             )
+        elif args.command == "chunked-payout-reconciliations":
+            row_fn = lambda row: admin_readonly.row_to_chunked_payout_reconciliation_dict(
+                row,
+                include_raw_evidence=args.include_raw_evidence,
+            )
         rows = _run_query(database_url, sql, row_fn)
         payload = {"command": args.command, "rows": rows}
         if args.command == "reward-events" and args.maturity_status:
             payload["maturity_status"] = args.maturity_status
-        if args.command == "payout-reconciliations" and args.include_raw_evidence:
+        if args.command in (
+            "payout-reconciliations",
+            "chunked-payout-reconciliations",
+        ) and args.include_raw_evidence:
             payload["include_raw_evidence"] = True
 
     json.dump(payload, sys.stdout, indent=2, sort_keys=True)

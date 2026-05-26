@@ -252,6 +252,58 @@ def test_admin_payout_reconciliation_details_include_raw_flag() -> None:
     assert evidence["hex"] == "ff"
 
 
+def test_admin_command_map_includes_chunked_payout_reconciliation_commands() -> None:
+    from payouts.scripts import pool_ledger_admin_readonly as admin_cli
+
+    assert "chunked-payout-reconciliations" in admin_cli._COMMANDS
+    build_sql, row_fn = admin_cli._COMMANDS["chunked-payout-reconciliations"]
+    assert build_sql() == admin_readonly.build_chunked_payout_reconciliations_sql()
+    assert row_fn is admin_readonly.row_to_chunked_payout_reconciliation_dict
+    args = admin_cli._parse_args(
+        ["chunked-payout-reconciliation-details", "--reconciliation-id", "1"]
+    )
+    assert args.command == "chunked-payout-reconciliation-details"
+    assert args.reconciliation_id == 1
+    assert args.include_raw_evidence is False
+
+    sql = admin_readonly.build_chunked_payout_reconciliation_details_sql(1)
+    admin_readonly.assert_readonly_sql(sql)
+    chunks_sql = admin_readonly.build_chunked_payout_reconciliation_chunks_sql(1)
+    admin_readonly.assert_readonly_sql(chunks_sql)
+
+
+def test_admin_chunked_payout_reconciliations_sanitized_by_default() -> None:
+    from payouts.collector.app import sc_node_chunked_payout_reconciliation as chunked
+
+    txid = "abc123"
+    raw = {"by_txid": {txid: {"hex": "00" * 50, "txid": txid}}}
+    row = {
+        "id": 1,
+        "production_execution_id": 3,
+        "payout_plan_id": 2,
+        "sc_node_id": "sc-2",
+        "payout_address": "az1test",
+        "expected_chunk_count": 9,
+        "source_chunk_count": 9,
+        "receiver_chunk_count": 9,
+        "expected_amount_total": Decimal("223.125"),
+        "source_amount_total": Decimal("223.125"),
+        "source_fee_total": None,
+        "receiver_amount_total": Decimal("223.125"),
+        "reconciliation_status": "matched",
+        "matched": True,
+        "refusal_reason": None,
+        "source_wallet_name": "wallet",
+        "source_wallet_evidence": raw,
+        "receiver_wallet_evidence": None,
+    }
+    result = admin_readonly.row_to_chunked_payout_reconciliation_dict(row)
+    evidence = result["source_wallet_evidence"]
+    assert isinstance(evidence, dict)
+    assert "hex" not in evidence["by_txid"][txid]
+    assert evidence["by_txid"][txid]["hex_omitted"] is True
+
+
 def test_admin_command_map_includes_production_execution_commands() -> None:
     from payouts.scripts import pool_ledger_admin_readonly as admin_cli
 

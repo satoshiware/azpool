@@ -14,6 +14,7 @@ from payouts.collector.app import (
     sc_node_payout_production_executor,
     sc_node_payout_production_preflight,
     sc_node_payout_production_chunked_executor,
+    sc_node_chunked_payout_reconciliation,
     sc_node_payout_reconciliation,
     sc_node_payout_test_executor,
 )
@@ -256,6 +257,39 @@ def build_production_execution_chunks_sql(production_execution_id: int) -> str:
 
 def row_to_production_execution_chunk_dict(row: Mapping[str, Any]) -> dict[str, Any]:
     return sc_node_payout_production_chunked_executor.row_to_production_execution_chunk_dict(
+        row
+    )
+
+
+def build_chunked_payout_reconciliations_sql() -> str:
+    return sc_node_chunked_payout_reconciliation.build_chunked_reconciliations_sql()
+
+
+def build_chunked_payout_reconciliation_details_sql(reconciliation_id: int) -> str:
+    return sc_node_chunked_payout_reconciliation.build_chunked_reconciliation_details_sql(
+        reconciliation_id
+    )
+
+
+def build_chunked_payout_reconciliation_chunks_sql(reconciliation_id: int) -> str:
+    return sc_node_chunked_payout_reconciliation.build_chunked_reconciliation_chunks_sql(
+        reconciliation_id
+    )
+
+
+def row_to_chunked_payout_reconciliation_dict(
+    row: Mapping[str, Any],
+    *,
+    include_raw_evidence: bool = False,
+) -> dict[str, Any]:
+    return sc_node_chunked_payout_reconciliation.row_to_chunked_reconciliation_dict(
+        row,
+        include_raw_evidence=include_raw_evidence,
+    )
+
+
+def row_to_chunked_payout_reconciliation_chunk_dict(row: Mapping[str, Any]) -> dict[str, Any]:
+    return sc_node_chunked_payout_reconciliation.row_to_chunked_reconciliation_chunk_dict(
         row
     )
 

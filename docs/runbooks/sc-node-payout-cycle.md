@@ -250,10 +250,12 @@ Only after on-chain confirmations are visible to the operator.
 
 After execution is **confirmed**.
 
+### 9a. Single-send execution (one txid)
+
 - [ ] Export SC-node **receive-side** JSON manually (no bearer token / no HTTP from reconciliation script). Save path e.g. `/tmp/sc2-wallet-transactions.json`
-- [ ] `preview` with `--receiver-transactions-json` and `--azc-bin /usr/local/bin/azc-payout-readonly`
+- [ ] `sc_node_payout_reconciliation.py preview` with `--receiver-transactions-json` and `--azc-bin /usr/local/bin/azc-payout-readonly`
 - [ ] `record` — expect `reconciliation_status: matched` when evidence aligns
-- [ ] **Idempotent replay:** Re-running `record` with the same evidence should return `idempotent_replay: true`, `recorded: false` (no unique constraint error)
+- [ ] **Idempotent replay:** Re-running `record` with the same evidence should return `idempotent_replay: true`, `recorded: false`
 - [ ] `details --reconciliation-id RECONCILIATION_ID`
 - [ ] Admin (sanitized by default — no huge `hex`):
   ```bash
@@ -261,9 +263,34 @@ After execution is **confirmed**.
   .venv/bin/python payouts/scripts/pool_ledger_admin_readonly.py \
     payout-reconciliation-details --reconciliation-id RECONCILIATION_ID
   ```
-- [ ] Use `--include-raw-evidence` only when debugging raw `gettransaction` payload
 
 See [sc-node-payout-reconciliation.md](../payouts/docs/sc-node-payout-reconciliation.md).
+
+### 9b. Chunked execution (multiple txids)
+
+Use when production execution has per-chunk rows (e.g. cycle #2 `production_execution_id=3`, nine chunks).
+
+- [ ] Apply migration `014` if not already applied
+- [ ] Export SC-node receive JSON covering **all** chunk txids (same manual export rules — no HTTP from script)
+- [ ] Source-only preview (optional sanity check before receiver export):
+  ```bash
+  .venv/bin/python payouts/scripts/sc_node_chunked_payout_reconciliation.py preview \
+    --production-execution-id PRODUCTION_EXECUTION_ID \
+    --source-wallet-name wallet \
+    --azc-bin /usr/local/bin/azc-payout-readonly
+  ```
+  Expect `reconciliation_status: source_only`, `matched: false`
+- [ ] Preview with receiver JSON — expect `matched: true` when all nine chunks align
+- [ ] `record` — idempotent on `production_execution_id`
+- [ ] `details --reconciliation-id CHUNKED_RECONCILIATION_ID` (add `--include-raw-evidence` only for debugging)
+- [ ] Admin:
+  ```bash
+  .venv/bin/python payouts/scripts/pool_ledger_admin_readonly.py chunked-payout-reconciliations
+  .venv/bin/python payouts/scripts/pool_ledger_admin_readonly.py \
+    chunked-payout-reconciliation-details --reconciliation-id CHUNKED_RECONCILIATION_ID
+  ```
+
+See [sc-node-chunked-payout-reconciliation.md](../payouts/docs/sc-node-chunked-payout-reconciliation.md).
 
 ---
 
