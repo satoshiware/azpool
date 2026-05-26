@@ -257,6 +257,77 @@ def test_row_to_reconciliation_dict_include_raw_evidence_preserves_hex() -> None
     assert evidence["hex"] == raw["hex"]
 
 
+def _matched_preview() -> reconciliation.ReconciliationPreview:
+    source = reconciliation.parse_source_gettransaction(_source_payload(), _TXID)
+    receiver = reconciliation.parse_receiver_transactions_json([_receiver_row()], _TXID)
+    return reconciliation.compare_reconciliation(
+        _confirmed_execution(),
+        [_execution_row()],
+        source,
+        receiver,
+    )
+
+
+def _existing_reconciliation_row(
+    preview: reconciliation.ReconciliationPreview,
+    *,
+    reconciliation_id: int = 1,
+) -> dict[str, object]:
+    return {
+        "id": reconciliation_id,
+        "production_execution_id": preview.production_execution_id,
+        "payout_plan_id": preview.payout_plan_id,
+        "source_wallet_name": preview.source_wallet_name,
+        "txid": preview.txid,
+        "reconciliation_status": preview.reconciliation_status,
+        "expected_amount": preview.expected_amount,
+        "expected_address": preview.expected_address,
+        "matched": preview.matched,
+        "mismatch_reason": preview.mismatch_reason,
+        "receiver_amount": preview.receiver_amount,
+        "receiver_address": preview.receiver_address,
+        "receiver_category": preview.receiver_category,
+    }
+
+
+def test_build_reconciliation_by_execution_txid_sql_is_select_only() -> None:
+    sql = reconciliation.build_reconciliation_by_execution_txid_sql()
+    admin_readonly.assert_readonly_sql(sql)
+    assert "production_execution_id = %(production_execution_id)s" in sql
+    assert "receiver_amount" in sql
+
+
+def test_preview_matches_existing_reconciliation_returns_none_when_aligned() -> None:
+    preview = _matched_preview()
+    existing = _existing_reconciliation_row(preview)
+    assert reconciliation.preview_matches_existing_reconciliation(preview, existing) is None
+
+
+def test_preview_matches_existing_reconciliation_refuses_on_status_mismatch() -> None:
+    preview = _matched_preview()
+    existing = _existing_reconciliation_row(preview)
+    existing["reconciliation_status"] = "mismatch"
+    refusal = reconciliation.preview_matches_existing_reconciliation(preview, existing)
+    assert refusal is not None
+    assert "reconciliation_status mismatch" in refusal
+
+
+def test_preview_matches_existing_reconciliation_refuses_on_receiver_amount() -> None:
+    preview = _matched_preview()
+    existing = _existing_reconciliation_row(preview)
+    existing["receiver_amount"] = Decimal("1")
+    refusal = reconciliation.preview_matches_existing_reconciliation(preview, existing)
+    assert refusal is not None
+    assert "receiver_amount mismatch" in refusal
+
+
+def test_record_command_idempotent_replay_shape() -> None:
+    record_block = Path(reconciliation_cli.__file__).read_text(encoding="utf-8")
+    assert "idempotent_replay" in record_block
+    assert "preview_matches_existing_reconciliation" in record_block
+    assert '"reconciliation_id": reconciliation_id' in record_block
+
+
 def test_record_insert_params_wrap_jsonb_evidence() -> None:
     source = reconciliation.parse_source_gettransaction(_source_payload(), _TXID)
     receiver = reconciliation.parse_receiver_transactions_json([_receiver_row()], _TXID)

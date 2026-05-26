@@ -371,6 +371,7 @@ ORDER BY expected_amount DESC, sc_node_id
 
 
 def build_reconciliation_by_execution_txid_sql() -> str:
+    """SELECT existing reconciliation header for idempotent record checks."""
     sql = """
 SELECT
   id,
@@ -383,6 +384,9 @@ SELECT
   expected_address,
   matched,
   mismatch_reason,
+  receiver_amount,
+  receiver_address,
+  receiver_category,
   created_at,
   updated_at
 FROM sc_node_payout_reconciliations
@@ -391,6 +395,96 @@ WHERE production_execution_id = %(production_execution_id)s
 """.strip()
     _assert_readonly_sql(sql)
     return sql
+
+
+def _preview_field_mismatch(
+    field: str,
+    preview_value: object,
+    existing_value: object,
+) -> str | None:
+    if preview_value != existing_value:
+        return f"{field} mismatch (existing={existing_value!r}, preview={preview_value!r})"
+    return None
+
+
+def _optional_decimal_equal(
+    preview_value: Decimal | None,
+    existing_value: object,
+) -> bool:
+    if preview_value is None and existing_value is None:
+        return True
+    if preview_value is None or existing_value is None:
+        return False
+    return _quantize_amount(preview_value) == _quantize_amount(_to_decimal(existing_value))
+
+
+def preview_matches_existing_reconciliation(
+    preview: ReconciliationPreview,
+    existing: Mapping[str, Any],
+) -> str | None:
+    """
+    Return refusal_reason when an existing reconciliation disagrees with preview.
+
+    None means the preview matches the stored reconciliation key fields.
+    """
+    mismatches: list[str] = []
+
+    existing_txid = str(existing.get("txid", "")).strip()
+    if preview.txid != existing_txid:
+        mismatches.append(
+            _preview_field_mismatch("txid", preview.txid, existing_txid) or "txid mismatch"
+        )
+
+    for field, preview_value, existing_value in (
+        (
+            "reconciliation_status",
+            preview.reconciliation_status,
+            existing.get("reconciliation_status"),
+        ),
+        ("matched", preview.matched, bool(existing.get("matched"))),
+        (
+            "expected_address",
+            preview.expected_address.strip(),
+            str(existing.get("expected_address", "")).strip(),
+        ),
+        (
+            "receiver_address",
+            preview.receiver_address,
+            existing.get("receiver_address"),
+        ),
+        (
+            "receiver_category",
+            preview.receiver_category,
+            existing.get("receiver_category"),
+        ),
+    ):
+        mismatch = _preview_field_mismatch(field, preview_value, existing_value)
+        if mismatch is not None:
+            mismatches.append(mismatch)
+
+    if not _optional_decimal_equal(
+        preview.expected_amount,
+        existing.get("expected_amount"),
+    ):
+        mismatches.append(
+            "expected_amount mismatch "
+            f"(existing={existing.get('expected_amount')!r}, "
+            f"preview={preview.expected_amount!r})"
+        )
+
+    if not _optional_decimal_equal(
+        preview.receiver_amount,
+        existing.get("receiver_amount"),
+    ):
+        mismatches.append(
+            "receiver_amount mismatch "
+            f"(existing={existing.get('receiver_amount')!r}, "
+            f"preview={preview.receiver_amount!r})"
+        )
+
+    if mismatches:
+        return "; ".join(mismatches)
+    return None
 
 
 def parse_source_gettransaction(payload: Mapping[str, Any], txid: str) -> SourceTransactionEvidence:
