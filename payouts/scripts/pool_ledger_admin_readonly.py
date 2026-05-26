@@ -84,6 +84,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "production-execution-details",
             "payout-reconciliations",
             "payout-reconciliation-details",
+            "production-chunked-execution-details",
             "unmapped-identities",
         ],
     )
@@ -163,7 +164,52 @@ def main(argv: list[str] | None = None) -> int:
         print("DATABASE_URL is required", file=sys.stderr)
         return 1
 
-    if args.command == "payout-reconciliation-details":
+    if args.command == "production-chunked-execution-details":
+        if args.production_execution_id is None:
+            print(
+                "--production-execution-id is required for "
+                "production-chunked-execution-details",
+                file=sys.stderr,
+            )
+            return 1
+        header_sql = admin_readonly.build_production_execution_details_sql(
+            args.production_execution_id
+        )
+        rows_sql = admin_readonly.build_production_execution_rows_sql(
+            args.production_execution_id
+        )
+        chunks_sql = admin_readonly.build_production_execution_chunks_sql(
+            args.production_execution_id
+        )
+        header_rows = _run_query(
+            database_url,
+            header_sql,
+            admin_readonly.row_to_production_execution_dict,
+        )
+        if not header_rows:
+            print(
+                f"production execution not found: {args.production_execution_id}",
+                file=sys.stderr,
+            )
+            return 1
+        row_details = _run_query(
+            database_url,
+            rows_sql,
+            admin_readonly.row_to_production_execution_row_dict,
+        )
+        chunk_details = _run_query(
+            database_url,
+            chunks_sql,
+            admin_readonly.row_to_production_execution_chunk_dict,
+        )
+        payload = {
+            "command": args.command,
+            "production_execution_id": args.production_execution_id,
+            "production_execution": header_rows[0],
+            "rows": row_details,
+            "chunks": chunk_details,
+        }
+    elif args.command == "payout-reconciliation-details":
         if args.reconciliation_id is None:
             print(
                 "--reconciliation-id is required for payout-reconciliation-details",
