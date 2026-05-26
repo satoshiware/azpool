@@ -180,5 +180,21 @@ See the full matrix in [payout-ledger-file-inventory.md](../inventory/payout-led
 | **PR G** | SC-node payout address registry (schema + read-only admin) |
 | **PR H** | Read-only support-wallet reward listener |
 | **PR I** | SC-node credit ledger (no wallet sends) — **merged/in progress** |
-| **PR J** | Payout plan generator (no wallet sends) — **next** |
-| **PR K** | Guarded dry-run wallet payout execution (separate approval) |
+| **PR J** | Payout plan generator (no wallet sends) |
+| **PR K** | Payout plan approval / accounting preflight |
+| **PR L** | Regtest/fake execution (no wallet RPC) |
+| **PR M** | Production preflight (`getbalances` only) |
+| **PR N** | Production executor (`sendtoaddress` in `execute-real`) |
+| **PR O** | Post-execution reconciliation (`gettransaction` + receiver JSON) |
+| **PR P** | Sanitized reconciliation admin evidence output |
+| **PR Q** | Idempotent reconciliation `record` |
+| **PR R** | Operator payout cycle runbook ([sc-node-payout-cycle.md](../runbooks/sc-node-payout-cycle.md)) — **docs only** |
+
+## PR R SC-node payout cycle runbook decision
+
+PR R (`payouts/sc-node-payout-cycle-runbook-v0`) adds a single operator checklist tying together PR G–Q tools.
+
+- **Documentation only** — no new executables, migrations, or wallet behavior.
+- Documents stop conditions, wallet wrapper expectations (`azc-payout`, `azc-payout-readonly`), and per-cycle placeholders.
+- Records cycle #1 as **history**, not reusable constants for future cycles.
+- Does not retire `payouts/app/*` or legacy scripts.
