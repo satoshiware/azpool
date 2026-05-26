@@ -13,6 +13,7 @@ from typing import Any
 
 import psycopg
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 
 from payouts.collector.app import sc_node_payout_reconciliation as reconciliation
 
@@ -164,6 +165,41 @@ def _load_execution_bundle(
     return execution, rows
 
 
+def _jsonb_evidence(value: dict[str, Any] | None) -> Jsonb | None:
+    if value is None:
+        return None
+    return Jsonb(value)
+
+
+def _reconciliation_insert_params(
+    preview: reconciliation.ReconciliationPreview,
+    *,
+    notes: str | None,
+) -> dict[str, object]:
+    """Build INSERT params with JSONB-adapted wallet evidence for psycopg."""
+    return {
+        "production_execution_id": preview.production_execution_id,
+        "payout_plan_id": preview.payout_plan_id,
+        "source_wallet_name": preview.source_wallet_name,
+        "txid": preview.txid,
+        "reconciliation_status": preview.reconciliation_status,
+        "expected_amount": preview.expected_amount,
+        "expected_address": preview.expected_address,
+        "source_confirmations": preview.source_confirmations,
+        "source_fee": preview.source_fee,
+        "source_amount": preview.source_amount,
+        "receiver_confirmations": preview.receiver_confirmations,
+        "receiver_amount": preview.receiver_amount,
+        "receiver_category": preview.receiver_category,
+        "receiver_address": preview.receiver_address,
+        "matched": preview.matched,
+        "mismatch_reason": preview.mismatch_reason,
+        "source_wallet_evidence": _jsonb_evidence(preview.source_wallet_evidence),
+        "receiver_wallet_evidence": _jsonb_evidence(preview.receiver_wallet_evidence),
+        "notes": notes,
+    }
+
+
 def _build_preview(
     *,
     execution: dict[str, object],
@@ -300,27 +336,7 @@ def _cmd_record(args: argparse.Namespace) -> int:
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 reconciliation.build_insert_reconciliation_sql(),
-                {
-                    "production_execution_id": preview.production_execution_id,
-                    "payout_plan_id": preview.payout_plan_id,
-                    "source_wallet_name": preview.source_wallet_name,
-                    "txid": preview.txid,
-                    "reconciliation_status": preview.reconciliation_status,
-                    "expected_amount": preview.expected_amount,
-                    "expected_address": preview.expected_address,
-                    "source_confirmations": preview.source_confirmations,
-                    "source_fee": preview.source_fee,
-                    "source_amount": preview.source_amount,
-                    "receiver_confirmations": preview.receiver_confirmations,
-                    "receiver_amount": preview.receiver_amount,
-                    "receiver_category": preview.receiver_category,
-                    "receiver_address": preview.receiver_address,
-                    "matched": preview.matched,
-                    "mismatch_reason": preview.mismatch_reason,
-                    "source_wallet_evidence": preview.source_wallet_evidence,
-                    "receiver_wallet_evidence": preview.receiver_wallet_evidence,
-                    "notes": args.notes,
-                },
+                _reconciliation_insert_params(preview, notes=args.notes),
             )
             inserted = cur.fetchone()
             if inserted is None:
