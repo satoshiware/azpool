@@ -51,6 +51,11 @@ Columns: **Path** | **Classification** | **Reason** | **Evidence** | **Proposed 
 | `payouts/migrations/006_sc_node_credit_ledger.sql` | ACTIVE | SC-node draft credit ledger (PR I) | Manual apply; no sends | Keep | High | `\d sc_node_reward_credit_runs` |
 | `payouts/migrations/007–012_sc_node_payout_*.sql` | ACTIVE | Plans, approval, test/prod execution, reconciliation (PR J–O) | Manual apply per PR | Keep | **Critical** | Per-migration `\d` smoke |
 | `payouts/migrations/013_sc_node_payout_production_execution_chunks.sql` | ACTIVE | Chunked production execution chunks (PR S) | Manual apply; UTXO fragmentation path | Keep | **Critical** | `\d sc_node_payout_production_execution_chunks` |
+| `payouts/migrations/014_sc_node_chunked_payout_reconciliation.sql` | ACTIVE | Chunked payout reconciliation audit (PR T) | After confirmed chunked execution | Keep | **Critical** | `\d sc_node_chunked_payout_reconciliations` |
+| `payouts/scripts/sc_node_chunked_payout_reconciliation.py` | ACTIVE | Chunked reconciliation CLI (PR T) | Post-chunked payout audit | Keep | **Critical** | Chunked reconciliation pytest |
+| `payouts/collector/app/sc_node_chunked_payout_reconciliation.py` | ACTIVE | Chunked reconcile compare/SQL (PR T) | Chunked CLI + admin | Keep | Medium | Chunked reconciliation tests |
+| `docs/adr/ADR-sc-node-chunked-payout-reconciliation.md` | ACTIVE | Chunked reconciliation ADR (PR T) | PR T | Keep | Low | ADR review |
+| `payouts/docs/sc-node-chunked-payout-reconciliation.md` | ACTIVE | Chunked reconciliation ops doc (PR T) | PR T | Keep | Low | Ops review |
 | `payouts/scripts/sc_node_payout_*.py` | ACTIVE | Planner, review, test/prod executor, reconciliation CLIs | Manual operator-triggered; prod send only in executor | Keep | **Critical** | `pytest payouts/collector/tests` |
 | `payouts/scripts/sc_node_payout_production_chunked_executor.py` | ACTIVE | Chunked production sendtoaddress sequence (PR S) | After single-send refused (tx too large) | Keep | **Critical** | Preview + dry-run argv tests |
 | `payouts/collector/app/sc_node_payout_production_chunked_executor.py` | ACTIVE | Chunk split/SQL/guardrails (PR S) | Chunked CLI + admin chunks | Keep | Medium | Chunked executor tests |
