@@ -13,6 +13,7 @@ from payouts.collector.app import (
     sc_node_payout_planner,
     sc_node_payout_production_executor,
     sc_node_payout_production_preflight,
+    sc_node_payout_reconciliation,
     sc_node_payout_test_executor,
 )
 
@@ -244,6 +245,30 @@ def row_to_production_execution_dict(row: Mapping[str, Any]) -> dict[str, Any]:
 
 def row_to_production_execution_row_dict(row: Mapping[str, Any]) -> dict[str, Any]:
     return sc_node_payout_production_executor.row_to_production_execution_row_dict(row)
+
+
+def build_payout_reconciliations_sql() -> str:
+    return sc_node_payout_reconciliation.build_reconciliations_sql()
+
+
+def build_payout_reconciliation_details_sql(reconciliation_id: int) -> str:
+    return sc_node_payout_reconciliation.build_reconciliation_details_sql(
+        reconciliation_id
+    )
+
+
+def build_payout_reconciliation_rows_sql(reconciliation_id: int) -> str:
+    return sc_node_payout_reconciliation.build_reconciliation_rows_sql(
+        reconciliation_id
+    )
+
+
+def row_to_payout_reconciliation_dict(row: Mapping[str, Any]) -> dict[str, Any]:
+    return sc_node_payout_reconciliation.row_to_reconciliation_dict(row)
+
+
+def row_to_payout_reconciliation_row_dict(row: Mapping[str, Any]) -> dict[str, Any]:
+    return sc_node_payout_reconciliation.row_to_reconciliation_row_dict(row)
 
 
 def _serialize_datetime(value: datetime | None) -> str | None:
