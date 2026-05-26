@@ -272,6 +272,13 @@ def test_admin_command_map_includes_chunked_payout_reconciliation_commands() -> 
     admin_readonly.assert_readonly_sql(chunks_sql)
 
 
+def test_admin_chunked_reconciliation_sql_includes_supersede_columns() -> None:
+    sql = admin_readonly.build_chunked_payout_reconciliations_sql().lower()
+    assert "superseded_at" in sql
+    assert "superseded_by_reconciliation_id" in sql
+    assert "supersedes_reconciliation_id" in sql
+
+
 def test_admin_chunked_payout_reconciliations_sanitized_by_default() -> None:
     from payouts.collector.app import sc_node_chunked_payout_reconciliation as chunked
 

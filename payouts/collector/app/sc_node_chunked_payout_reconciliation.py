@@ -31,6 +31,20 @@ _CHUNKED_RECON_INSERT_TABLES = frozenset(
     }
 )
 
+_CHUNKED_RECON_UPDATE_TABLES = frozenset({"sc_node_chunked_payout_reconciliations"})
+
+_SUPERSEDE_SELECT_COLUMNS = """
+  superseded_at,
+  superseded_by_reconciliation_id,
+  superseded_reason,
+  (
+    SELECT prior.id
+    FROM sc_node_chunked_payout_reconciliations prior
+    WHERE prior.superseded_by_reconciliation_id = sc_node_chunked_payout_reconciliations.id
+    LIMIT 1
+  ) AS supersedes_reconciliation_id
+""".strip()
+
 _WALLET_SEND_KEYWORDS = re.compile(
     r"\b("
     r"sendmany|sendtoaddress|sendrawtransaction|walletpassphrase|"
@@ -107,6 +121,16 @@ def _assert_chunked_recon_insert_sql(sql: str) -> None:
     for token in re.findall(r"insert\s+into\s+([a-z0-9_]+)", lowered):
         if token not in _CHUNKED_RECON_INSERT_TABLES:
             raise ValueError(f"chunked reconciliation SQL must not target table: {token}")
+
+
+def _assert_chunked_recon_update_sql(sql: str) -> None:
+    assert_no_wallet_send_keywords(sql)
+    lowered = sql.lower()
+    if "update" not in lowered:
+        raise ValueError("chunked reconciliation supersede SQL must UPDATE")
+    for token in re.findall(r"update\s+([a-z0-9_]+)", lowered):
+        if token not in _CHUNKED_RECON_UPDATE_TABLES:
+            raise ValueError(f"chunked reconciliation supersede SQL must not target table: {token}")
 
 
 def _quantize_amount(value: Decimal) -> Decimal:
@@ -321,7 +345,7 @@ INSERT INTO sc_node_chunked_payout_reconciliation_chunks (
 
 
 def build_chunked_reconciliations_sql() -> str:
-    sql = """
+    sql = f"""
 SELECT
   id,
   production_execution_id,
@@ -341,6 +365,7 @@ SELECT
   source_wallet_name,
   source_wallet_evidence,
   receiver_wallet_evidence,
+  {_SUPERSEDE_SELECT_COLUMNS},
   created_at,
   updated_at
 FROM sc_node_chunked_payout_reconciliations
@@ -372,6 +397,7 @@ SELECT
   source_wallet_name,
   source_wallet_evidence,
   receiver_wallet_evidence,
+  {_SUPERSEDE_SELECT_COLUMNS},
   created_at,
   updated_at
 FROM sc_node_chunked_payout_reconciliations
@@ -412,7 +438,7 @@ ORDER BY chunk_index
 
 
 def build_chunked_reconciliation_by_execution_sql() -> str:
-    sql = """
+    sql = f"""
 SELECT
   id,
   production_execution_id,
@@ -430,13 +456,128 @@ SELECT
   matched,
   refusal_reason,
   source_wallet_name,
+  {_SUPERSEDE_SELECT_COLUMNS},
   created_at,
   updated_at
 FROM sc_node_chunked_payout_reconciliations
 WHERE production_execution_id = %(production_execution_id)s
+  AND superseded_at IS NULL
 """.strip()
     _assert_readonly_sql(sql)
     return sql
+
+
+def build_lock_active_chunked_reconciliation_by_execution_sql() -> str:
+    sql = f"""
+SELECT
+  id,
+  production_execution_id,
+  payout_plan_id,
+  sc_node_id,
+  payout_address,
+  expected_chunk_count,
+  source_chunk_count,
+  receiver_chunk_count,
+  expected_amount_total,
+  source_amount_total,
+  source_fee_total,
+  receiver_amount_total,
+  reconciliation_status,
+  matched,
+  refusal_reason,
+  source_wallet_name,
+  {_SUPERSEDE_SELECT_COLUMNS},
+  created_at,
+  updated_at
+FROM sc_node_chunked_payout_reconciliations
+WHERE production_execution_id = %(production_execution_id)s
+  AND superseded_at IS NULL FOR UPDATE
+""".strip()
+    if " for update" not in sql.lower():
+        raise ValueError("lock SQL must use FOR UPDATE")
+    return sql
+
+
+def build_mark_chunked_reconciliation_superseded_sql() -> str:
+    """Remove row from active partial unique index before inserting replacement."""
+    sql = """
+UPDATE sc_node_chunked_payout_reconciliations
+SET
+  superseded_at = now(),
+  superseded_reason = %(superseded_reason)s,
+  superseded_by_reconciliation_id = NULL,
+  updated_at = now()
+WHERE id = %(reconciliation_id)s
+  AND production_execution_id = %(production_execution_id)s
+  AND superseded_at IS NULL
+  AND matched = false
+RETURNING id
+""".strip()
+    _assert_chunked_recon_update_sql(sql)
+    return sql
+
+
+def build_link_chunked_reconciliation_superseded_by_sql() -> str:
+    """Set superseded_by after replacement row exists (same transaction)."""
+    sql = """
+UPDATE sc_node_chunked_payout_reconciliations
+SET
+  superseded_by_reconciliation_id = %(superseded_by_reconciliation_id)s,
+  updated_at = now()
+WHERE id = %(reconciliation_id)s
+  AND production_execution_id = %(production_execution_id)s
+  AND superseded_at IS NOT NULL
+  AND superseded_by_reconciliation_id IS NULL
+RETURNING id
+""".strip()
+    _assert_chunked_recon_update_sql(sql)
+    return sql
+
+
+def reconciliation_is_active(row: Mapping[str, Any]) -> bool:
+    return row.get("superseded_at") is None
+
+
+def validate_reconciliation_allows_supersede(row: Mapping[str, Any]) -> str | None:
+    if not reconciliation_is_active(row):
+        return "reconciliation is already superseded"
+    if bool(row.get("matched")):
+        return "matched reconciliations cannot be superseded"
+    return None
+
+
+def validate_chunked_reconciliation_supersede_request(
+    *,
+    supersede_reconciliation_id: int | None,
+    supersede_reason: str | None,
+    active_reconciliation: Mapping[str, Any] | None,
+    production_execution_id: int,
+) -> str | None:
+    if active_reconciliation is None:
+        if supersede_reconciliation_id is not None or (supersede_reason or "").strip():
+            return "no active reconciliation to supersede"
+        return None
+
+    active_id = int(active_reconciliation["id"])
+    active_exec_id = int(active_reconciliation["production_execution_id"])
+    if active_exec_id != production_execution_id:
+        return (
+            "active reconciliation production_execution_id mismatch "
+            f"(existing={active_exec_id}, requested={production_execution_id})"
+        )
+
+    if supersede_reconciliation_id is None or not (supersede_reason or "").strip():
+        return (
+            "active reconciliation exists with different evidence; "
+            "provide --supersede-reconciliation-id and --supersede-reason to retry"
+        )
+
+    if int(supersede_reconciliation_id) != active_id:
+        return (
+            f"--supersede-reconciliation-id must match active reconciliation id {active_id}"
+        )
+
+    return validate_reconciliation_allows_supersede(active_reconciliation)
 
 
 def _compare_chunk(
@@ -821,6 +962,19 @@ def row_to_chunked_reconciliation_dict(
         "receiver_wallet_evidence": sanitize_wallet_evidence(
             receiver_raw,
             include_raw=include_raw_evidence,
+        ),
+        "is_active": reconciliation_is_active(row),
+        "superseded_at": planner._serialize_datetime(row.get("superseded_at")),
+        "superseded_by_reconciliation_id": (
+            int(row["superseded_by_reconciliation_id"])
+            if row.get("superseded_by_reconciliation_id") is not None
+            else None
+        ),
+        "superseded_reason": row.get("superseded_reason"),
+        "supersedes_reconciliation_id": (
+            int(row["supersedes_reconciliation_id"])
+            if row.get("supersedes_reconciliation_id") is not None
+            else None
         ),
         "created_at": planner._serialize_datetime(row.get("created_at")),
         "updated_at": planner._serialize_datetime(row.get("updated_at")),

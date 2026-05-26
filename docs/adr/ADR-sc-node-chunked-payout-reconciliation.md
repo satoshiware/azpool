@@ -46,7 +46,16 @@ Receiver evidence: operator exports JSON (e.g. `/tmp/sc2-wallet-transactions.jso
 - `sc_node_chunked_payout_reconciliations` — summary with totals, status, and JSONB evidence snapshots.
 - `sc_node_chunked_payout_reconciliation_chunks` — per production execution chunk comparison.
 
-Unique on `production_execution_id` for idempotent `record`.
+Unique on `production_execution_id` for idempotent `record` on the **active** row (`superseded_at IS NULL`).
+
+## Supersede / retry (PR U)
+
+When an operator records reconciliation with stale receiver JSON, the active row may be `mismatch` while blocking a corrected record. PR U adds:
+
+- `superseded_at`, `superseded_by_reconciliation_id`, `superseded_reason` on historical rows (evidence unchanged).
+- Partial unique index: one active reconciliation per `production_execution_id`.
+- Explicit `record --supersede-reconciliation-id` + `--supersede-reason` to supersede only a **non-matched** active row and insert a replacement in one transaction.
+- Matched reconciliations cannot be superseded.
 
 ## Consequences
 

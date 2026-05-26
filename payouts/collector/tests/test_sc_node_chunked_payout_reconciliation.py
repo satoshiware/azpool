@@ -346,6 +346,217 @@ def test_jsonb_evidence_wrapper() -> None:
     assert chunked_cli._jsonb_evidence(None) is None
 
 
+def test_active_reconciliation_sql_filters_superseded_rows() -> None:
+    sql = chunked_recon.build_chunked_reconciliation_by_execution_sql().lower()
+    assert "superseded_at is null" in sql
+
+
+def test_lock_active_reconciliation_sql_uses_for_update() -> None:
+    sql = chunked_recon.build_lock_active_chunked_reconciliation_by_execution_sql()
+    lowered = sql.lower()
+    assert " for update" in lowered
+    assert "superseded_at is null" in lowered
+    assert "%(production_execution_id)s" in sql
+
+
+def test_lock_active_reconciliation_sql_passes_for_update_validation() -> None:
+    # Must not raise ValueError: lock SQL must use FOR UPDATE
+    chunked_recon.build_lock_active_chunked_reconciliation_by_execution_sql()
+
+
+def test_migration_015_replaces_unique_with_partial_index() -> None:
+    migration = (
+        AZPOOL_ROOT / "payouts/migrations/015_sc_node_chunked_payout_reconciliation_supersede.sql"
+    ).read_text(encoding="utf-8").lower()
+    assert "drop constraint if exists scn_cpr_exec_uniq" in migration
+    assert "idx_scn_cpr_exec_active_uniq" in migration
+    assert "where superseded_at is null" in migration
+
+
+def test_mark_superseded_sql_clears_active_slot_before_insert() -> None:
+    sql = chunked_recon.build_mark_chunked_reconciliation_superseded_sql()
+    lowered = sql.lower()
+    assert "superseded_at = now()" in lowered
+    assert "superseded_by_reconciliation_id = null" in lowered
+    assert "superseded_at is null" in lowered
+    assert "matched = false" in lowered
+    assert "%(superseded_by_reconciliation_id)s" not in sql
+
+
+def test_link_superseded_by_sql_requires_already_superseded_row() -> None:
+    sql = chunked_recon.build_link_chunked_reconciliation_superseded_by_sql()
+    lowered = sql.lower()
+    assert "superseded_by_reconciliation_id = %(superseded_by_reconciliation_id)s" in lowered
+    assert "superseded_at is not null" in lowered
+    assert "superseded_by_reconciliation_id is null" in lowered
+
+
+def test_supersede_record_script_order_mark_insert_link() -> None:
+    script = Path(chunked_cli.__file__).read_text(encoding="utf-8")
+    start = script.index("superseded_id = reconciliation_id")
+    end = script.index("conn.commit()", start)
+    block = script[start:end]
+    mark_pos = block.index("build_mark_chunked_reconciliation_superseded_sql")
+    insert_pos = block.index("_insert_chunked_reconciliation")
+    link_pos = block.index("build_link_chunked_reconciliation_superseded_by_sql")
+    assert mark_pos < insert_pos < link_pos
+
+
+def test_supersede_record_script_rolls_back_on_insert_failure() -> None:
+    script = Path(chunked_cli.__file__).read_text(encoding="utf-8")
+    start = script.index("build_mark_chunked_reconciliation_superseded_sql")
+    end = script.index("build_link_chunked_reconciliation_superseded_by_sql")
+    block = script[start:end]
+    assert "conn.rollback()" in block
+    assert "_insert_chunked_reconciliation" in block
+
+
+def test_validate_supersede_requires_explicit_flags_when_active_differs() -> None:
+    active = {
+        "id": 1,
+        "production_execution_id": _EXECUTION_ID,
+        "matched": False,
+        "superseded_at": None,
+    }
+    refusal = chunked_recon.validate_chunked_reconciliation_supersede_request(
+        supersede_reconciliation_id=None,
+        supersede_reason=None,
+        active_reconciliation=active,
+        production_execution_id=_EXECUTION_ID,
+    )
+    assert refusal is not None
+    assert "supersede-reconciliation-id" in refusal
+
+
+def test_validate_supersede_refuses_matched_reconciliation() -> None:
+    active = {
+        "id": 1,
+        "production_execution_id": _EXECUTION_ID,
+        "matched": True,
+        "superseded_at": None,
+    }
+    refusal = chunked_recon.validate_reconciliation_allows_supersede(active)
+    assert refusal is not None
+    assert "matched" in refusal
+
+
+def test_validate_supersede_id_must_match_active_reconciliation() -> None:
+    active = {
+        "id": 1,
+        "production_execution_id": _EXECUTION_ID,
+        "matched": False,
+        "superseded_at": None,
+    }
+    refusal = chunked_recon.validate_chunked_reconciliation_supersede_request(
+        supersede_reconciliation_id=99,
+        supersede_reason="stale receiver JSON",
+        active_reconciliation=active,
+        production_execution_id=_EXECUTION_ID,
+    )
+    assert refusal is not None
+    assert "must match active reconciliation id 1" in refusal
+
+
+def test_validate_supersede_refuses_already_superseded_row() -> None:
+    from datetime import datetime, timezone
+
+    row = {
+        "id": 1,
+        "production_execution_id": _EXECUTION_ID,
+        "matched": False,
+        "superseded_at": datetime.now(timezone.utc),
+    }
+    refusal = chunked_recon.validate_reconciliation_allows_supersede(row)
+    assert refusal is not None
+    assert "already superseded" in refusal
+
+
+def test_validate_supersede_accepts_mismatch_active_row() -> None:
+    active = {
+        "id": 1,
+        "production_execution_id": _EXECUTION_ID,
+        "matched": False,
+        "superseded_at": None,
+    }
+    refusal = chunked_recon.validate_chunked_reconciliation_supersede_request(
+        supersede_reconciliation_id=1,
+        supersede_reason="stale receiver JSON",
+        active_reconciliation=active,
+        production_execution_id=_EXECUTION_ID,
+    )
+    assert refusal is None
+
+
+def test_row_dict_marks_superseded_and_active_status() -> None:
+    row = {
+        "id": 1,
+        "production_execution_id": _EXECUTION_ID,
+        "payout_plan_id": _PLAN_ID,
+        "sc_node_id": "sc-2",
+        "payout_address": _ADDRESS,
+        "expected_chunk_count": 9,
+        "source_chunk_count": 9,
+        "receiver_chunk_count": 0,
+        "expected_amount_total": _PLANNED,
+        "source_amount_total": _PLANNED,
+        "source_fee_total": None,
+        "receiver_amount_total": Decimal("0"),
+        "reconciliation_status": "mismatch",
+        "matched": False,
+        "refusal_reason": "receiver",
+        "source_wallet_name": "wallet",
+        "source_wallet_evidence": None,
+        "receiver_wallet_evidence": None,
+        "superseded_at": "2026-05-26T00:00:00+00:00",
+        "superseded_by_reconciliation_id": 2,
+        "superseded_reason": "stale receiver JSON",
+        "supersedes_reconciliation_id": None,
+    }
+    result = chunked_recon.row_to_chunked_reconciliation_dict(row)
+    assert result["is_active"] is False
+    assert result["superseded_by_reconciliation_id"] == 2
+    assert result["superseded_reason"] == "stale receiver JSON"
+
+
+def test_row_dict_shows_supersedes_link_on_replacement_row() -> None:
+    row = {
+        "id": 2,
+        "production_execution_id": _EXECUTION_ID,
+        "payout_plan_id": _PLAN_ID,
+        "sc_node_id": "sc-2",
+        "payout_address": _ADDRESS,
+        "expected_chunk_count": 9,
+        "source_chunk_count": 9,
+        "receiver_chunk_count": 9,
+        "expected_amount_total": _PLANNED,
+        "source_amount_total": _PLANNED,
+        "source_fee_total": None,
+        "receiver_amount_total": _PLANNED,
+        "reconciliation_status": "matched",
+        "matched": True,
+        "refusal_reason": None,
+        "source_wallet_name": "wallet",
+        "source_wallet_evidence": None,
+        "receiver_wallet_evidence": None,
+        "superseded_at": None,
+        "superseded_by_reconciliation_id": None,
+        "superseded_reason": None,
+        "supersedes_reconciliation_id": 1,
+    }
+    result = chunked_recon.row_to_chunked_reconciliation_dict(row)
+    assert result["is_active"] is True
+    assert result["supersedes_reconciliation_id"] == 1
+
+
+def test_record_script_exposes_supersede_flags() -> None:
+    script = Path(chunked_cli.__file__).read_text(encoding="utf-8")
+    assert "--supersede-reconciliation-id" in script
+    assert "--supersede-reason" in script
+    assert "build_lock_active_chunked_reconciliation_by_execution_sql" in script
+    assert "build_mark_chunked_reconciliation_superseded_sql" in script
+    assert "build_link_chunked_reconciliation_superseded_by_sql" in script
+
+
 def test_script_has_no_forbidden_rpc() -> None:
     script = (AZPOOL_ROOT / "payouts/scripts/sc_node_chunked_payout_reconciliation.py").read_text(
         encoding="utf-8"

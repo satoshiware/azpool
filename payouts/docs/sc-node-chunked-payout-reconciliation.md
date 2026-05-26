@@ -18,6 +18,8 @@ Reconciliation runs **after** a **confirmed chunked** production payout executio
 
 Apply `payouts/migrations/014_sc_node_chunked_payout_reconciliation.sql` (tables `sc_node_chunked_payout_reconciliations`, `sc_node_chunked_payout_reconciliation_chunks`).
 
+For supersede/retry support after a mistaken record, also apply `payouts/migrations/015_sc_node_chunked_payout_reconciliation_supersede.sql`.
+
 ## Script
 
 `payouts/scripts/sc_node_chunked_payout_reconciliation.py` — requires `DATABASE_URL`.
@@ -53,7 +55,26 @@ PYTHONPATH=. .venv/bin/python payouts/scripts/sc_node_chunked_payout_reconciliat
   --receiver-transactions-json /tmp/sc2-wallet-transactions.json
 ```
 
-Record is **idempotent** on `production_execution_id` (unique). A repeat run with the same computed result returns the existing reconciliation (`recorded: false`, `idempotent_replay: true`). If an existing row disagrees with the newly computed preview, the command refuses without updating (`refusal_reason` in JSON, exit code 1).
+Record is **idempotent** on the active reconciliation for `production_execution_id` (partial unique index where `superseded_at IS NULL`). A repeat run with the same computed result returns the existing active reconciliation (`recorded: false`, `idempotent_replay: true`).
+
+If an **active** row disagrees with the newly computed preview, the command refuses unless you explicitly supersede the active row (historical rows are preserved):
+
+```bash
+PYTHONPATH=. .venv/bin/python payouts/scripts/sc_node_chunked_payout_reconciliation.py record \
+  --production-execution-id 3 \
+  --source-wallet-name wallet \
+  --azc-bin /usr/local/bin/azc-payout-readonly \
+  --receiver-transactions-json /tmp/sc2-wallet-transactions.json \
+  --supersede-reconciliation-id 1 \
+  --supersede-reason "stale receiver JSON"
+```
+
+Rules:
+
+- `--supersede-reconciliation-id` must match the current **active** reconciliation id for that execution.
+- `--supersede-reason` is required and stored on the superseded row (audit only).
+- Only **non-matched** active reconciliations (`matched=false`) may be superseded; matched rows are refused.
+- Supersede + insert run in one transaction; the prior row keeps its evidence and gains `superseded_at`, `superseded_by_reconciliation_id`, `superseded_reason`.
 
 ### Details
 

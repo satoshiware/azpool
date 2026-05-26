@@ -281,8 +281,10 @@ Use when production execution has per-chunk rows (e.g. cycle #2 `production_exec
   ```
   Expect `reconciliation_status: source_only`, `matched: false`
 - [ ] Preview with receiver JSON — expect `matched: true` when all nine chunks align
-- [ ] `record` — idempotent on `production_execution_id`
-- [ ] `details --reconciliation-id CHUNKED_RECONCILIATION_ID` (add `--include-raw-evidence` only for debugging)
+- [ ] `record` — idempotent on active reconciliation for `production_execution_id`
+- [ ] If a prior **mismatch** used stale receiver JSON: re-export fresh JSON, `preview` until `matched: true`, then `record` with `--supersede-reconciliation-id` + `--supersede-reason` (matched rows cannot be superseded)
+- [ ] `details --reconciliation-id CHUNKED_RECONCILIATION_ID` — verify `is_active`, `superseded_by_reconciliation_id`, `supersedes_reconciliation_id` as needed
+- [ ] Add `--include-raw-evidence` only for debugging
 - [ ] Admin:
   ```bash
   .venv/bin/python payouts/scripts/pool_ledger_admin_readonly.py chunked-payout-reconciliations

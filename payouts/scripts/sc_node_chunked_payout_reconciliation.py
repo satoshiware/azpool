@@ -40,7 +40,22 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
 
     subparsers.add_parser("preview", parents=[common], help="Preview (no DB writes)")
-    subparsers.add_parser("record", parents=[common], help="Record reconciliation audit rows")
+    record_parser = subparsers.add_parser(
+        "record",
+        parents=[common],
+        help="Record reconciliation audit rows",
+    )
+    record_parser.add_argument(
+        "--supersede-reconciliation-id",
+        type=int,
+        default=None,
+        help="Active reconciliation id to supersede when retrying after stale evidence",
+    )
+    record_parser.add_argument(
+        "--supersede-reason",
+        default=None,
+        help="Audit reason recorded on the superseded reconciliation row",
+    )
 
     details_parser = subparsers.add_parser("details", help="Show recorded reconciliation")
     details_parser.add_argument("--reconciliation-id", type=int, required=True)
@@ -200,6 +215,60 @@ def _jsonb_evidence(value: dict[str, Any] | None) -> Jsonb | None:
     return Jsonb(value)
 
 
+def _insert_chunked_reconciliation(
+    cur: psycopg.Cursor,
+    preview: chunked_recon.ChunkedReconciliationPreview,
+) -> int:
+    cur.execute(
+        chunked_recon.build_insert_chunked_reconciliation_sql(),
+        {
+            "production_execution_id": preview.production_execution_id,
+            "payout_plan_id": preview.payout_plan_id,
+            "sc_node_id": preview.sc_node_id,
+            "payout_address": preview.payout_address,
+            "expected_chunk_count": preview.expected_chunk_count,
+            "source_chunk_count": preview.source_chunk_count,
+            "receiver_chunk_count": preview.receiver_chunk_count,
+            "expected_amount_total": preview.expected_amount_total,
+            "source_amount_total": preview.source_amount_total,
+            "source_fee_total": preview.source_fee_total,
+            "receiver_amount_total": preview.receiver_amount_total,
+            "reconciliation_status": preview.reconciliation_status,
+            "matched": preview.matched,
+            "refusal_reason": preview.mismatch_reason,
+            "source_wallet_name": preview.source_wallet_name,
+            "source_wallet_evidence": _jsonb_evidence(preview.source_wallet_evidence),
+            "receiver_wallet_evidence": _jsonb_evidence(preview.receiver_wallet_evidence),
+        },
+    )
+    inserted = cur.fetchone()
+    if inserted is None:
+        raise RuntimeError("failed to insert chunked reconciliation")
+    reconciliation_id = int(inserted["id"])
+    for chunk_row in preview.chunks:
+        cur.execute(
+            chunked_recon.build_insert_chunked_reconciliation_chunk_sql(),
+            {
+                "reconciliation_id": reconciliation_id,
+                "production_execution_chunk_id": chunk_row.production_execution_chunk_id,
+                "chunk_index": chunk_row.chunk_index,
+                "txid": chunk_row.txid,
+                "expected_amount": chunk_row.expected_amount,
+                "source_amount": chunk_row.source_amount,
+                "source_fee": chunk_row.source_fee,
+                "source_confirmations": chunk_row.source_confirmations,
+                "source_blockhash": chunk_row.source_blockhash,
+                "receiver_amount": chunk_row.receiver_amount,
+                "receiver_address": chunk_row.receiver_address,
+                "receiver_confirmations": chunk_row.receiver_confirmations,
+                "receiver_category": chunk_row.receiver_category,
+                "row_status": chunk_row.row_status,
+                "refusal_reason": chunk_row.mismatch_reason,
+            },
+        )
+    return reconciliation_id
+
+
 def _load_reconciliation_bundle(
     conn: psycopg.Connection,
     reconciliation_id: int,
@@ -266,13 +335,6 @@ def _cmd_record(args: argparse.Namespace) -> int:
             print("no confirmed chunks found for production execution", file=sys.stderr)
             return 1
 
-        with conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(
-                chunked_recon.build_chunked_reconciliation_by_execution_sql(),
-                {"production_execution_id": args.production_execution_id},
-            )
-            existing = cur.fetchone()
-
         source_by_txid = _fetch_source_by_txid(
             azc_bin=args.azc_bin,
             source_wallet_name=source_wallet,
@@ -287,92 +349,126 @@ def _cmd_record(args: argparse.Namespace) -> int:
             receiver_rows=receiver_rows,
         )
 
-        if existing is not None:
-            reconciliation_id = int(existing["id"])
-            refusal = chunked_recon.preview_matches_existing_chunked_reconciliation(
-                preview,
-                existing,
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                chunked_recon.build_lock_active_chunked_reconciliation_by_execution_sql(),
+                {"production_execution_id": args.production_execution_id},
             )
-            if refusal is not None:
+            existing = cur.fetchone()
+
+            if existing is not None:
+                reconciliation_id = int(existing["id"])
+                refusal = chunked_recon.preview_matches_existing_chunked_reconciliation(
+                    preview,
+                    existing,
+                )
+                if refusal is None:
+                    header, chunk_rows = _load_reconciliation_bundle(
+                        conn,
+                        reconciliation_id,
+                    )
+                    _emit_json(
+                        {
+                            "command": "record",
+                            "recorded": False,
+                            "idempotent_replay": True,
+                            "reconciliation_id": reconciliation_id,
+                            "reconciliation": chunked_recon.row_to_chunked_reconciliation_dict(
+                                header
+                            ),
+                            "chunks": [
+                                chunked_recon.row_to_chunked_reconciliation_chunk_dict(
+                                    row
+                                )
+                                for row in chunk_rows
+                            ],
+                        }
+                    )
+                    return 0
+
+                supersede_refusal = (
+                    chunked_recon.validate_chunked_reconciliation_supersede_request(
+                        supersede_reconciliation_id=args.supersede_reconciliation_id,
+                        supersede_reason=args.supersede_reason,
+                        active_reconciliation=existing,
+                        production_execution_id=args.production_execution_id,
+                    )
+                )
+                if supersede_refusal is not None:
+                    _emit_json(
+                        {
+                            "command": "record",
+                            "recorded": False,
+                            "idempotent_replay": False,
+                            "superseded": False,
+                            "reconciliation_id": reconciliation_id,
+                            "refusal_reason": supersede_refusal,
+                        }
+                    )
+                    return 1
+
+                superseded_id = reconciliation_id
+                cur.execute(
+                    chunked_recon.build_mark_chunked_reconciliation_superseded_sql(),
+                    {
+                        "reconciliation_id": superseded_id,
+                        "production_execution_id": args.production_execution_id,
+                        "superseded_reason": args.supersede_reason.strip(),
+                    },
+                )
+                if cur.fetchone() is None:
+                    print("failed to mark prior reconciliation superseded", file=sys.stderr)
+                    return 1
+                try:
+                    new_reconciliation_id = _insert_chunked_reconciliation(cur, preview)
+                except Exception as exc:
+                    conn.rollback()
+                    print(
+                        f"failed to insert replacement reconciliation: {exc}",
+                        file=sys.stderr,
+                    )
+                    return 1
+                cur.execute(
+                    chunked_recon.build_link_chunked_reconciliation_superseded_by_sql(),
+                    {
+                        "reconciliation_id": superseded_id,
+                        "production_execution_id": args.production_execution_id,
+                        "superseded_by_reconciliation_id": new_reconciliation_id,
+                    },
+                )
+                if cur.fetchone() is None:
+                    print(
+                        "failed to link superseded reconciliation to replacement",
+                        file=sys.stderr,
+                    )
+                    conn.rollback()
+                    return 1
+                reconciliation_id = new_reconciliation_id
+                conn.commit()
+                header, chunk_rows = _load_reconciliation_bundle(
+                    conn,
+                    reconciliation_id,
+                )
                 _emit_json(
                     {
                         "command": "record",
-                        "recorded": False,
+                        "recorded": True,
                         "idempotent_replay": False,
+                        "superseded": True,
+                        "supersede_reconciliation_id": superseded_id,
                         "reconciliation_id": reconciliation_id,
-                        "refusal_reason": refusal,
+                        "reconciliation": chunked_recon.row_to_chunked_reconciliation_dict(
+                            header
+                        ),
+                        "chunks": [
+                            chunked_recon.row_to_chunked_reconciliation_chunk_dict(row)
+                            for row in chunk_rows
+                        ],
                     }
                 )
-                return 1
-            header, chunk_rows = _load_reconciliation_bundle(conn, reconciliation_id)
-            _emit_json(
-                {
-                    "command": "record",
-                    "recorded": False,
-                    "idempotent_replay": True,
-                    "reconciliation_id": reconciliation_id,
-                    "reconciliation": chunked_recon.row_to_chunked_reconciliation_dict(
-                        header
-                    ),
-                    "chunks": [
-                        chunked_recon.row_to_chunked_reconciliation_chunk_dict(row)
-                        for row in chunk_rows
-                    ],
-                }
-            )
-            return 0
+                return 0
 
-        with conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(
-                chunked_recon.build_insert_chunked_reconciliation_sql(),
-                {
-                    "production_execution_id": preview.production_execution_id,
-                    "payout_plan_id": preview.payout_plan_id,
-                    "sc_node_id": preview.sc_node_id,
-                    "payout_address": preview.payout_address,
-                    "expected_chunk_count": preview.expected_chunk_count,
-                    "source_chunk_count": preview.source_chunk_count,
-                    "receiver_chunk_count": preview.receiver_chunk_count,
-                    "expected_amount_total": preview.expected_amount_total,
-                    "source_amount_total": preview.source_amount_total,
-                    "source_fee_total": preview.source_fee_total,
-                    "receiver_amount_total": preview.receiver_amount_total,
-                    "reconciliation_status": preview.reconciliation_status,
-                    "matched": preview.matched,
-                    "refusal_reason": preview.mismatch_reason,
-                    "source_wallet_name": preview.source_wallet_name,
-                    "source_wallet_evidence": _jsonb_evidence(preview.source_wallet_evidence),
-                    "receiver_wallet_evidence": _jsonb_evidence(
-                        preview.receiver_wallet_evidence
-                    ),
-                },
-            )
-            inserted = cur.fetchone()
-            if inserted is None:
-                print("failed to insert chunked reconciliation", file=sys.stderr)
-                return 1
-            reconciliation_id = int(inserted["id"])
-            for chunk_row in preview.chunks:
-                cur.execute(
-                    chunked_recon.build_insert_chunked_reconciliation_chunk_sql(),
-                    {
-                        "reconciliation_id": reconciliation_id,
-                        "production_execution_chunk_id": chunk_row.production_execution_chunk_id,
-                        "chunk_index": chunk_row.chunk_index,
-                        "txid": chunk_row.txid,
-                        "expected_amount": chunk_row.expected_amount,
-                        "source_amount": chunk_row.source_amount,
-                        "source_fee": chunk_row.source_fee,
-                        "source_confirmations": chunk_row.source_confirmations,
-                        "source_blockhash": chunk_row.source_blockhash,
-                        "receiver_amount": chunk_row.receiver_amount,
-                        "receiver_address": chunk_row.receiver_address,
-                        "receiver_confirmations": chunk_row.receiver_confirmations,
-                        "receiver_category": chunk_row.receiver_category,
-                        "row_status": chunk_row.row_status,
-                        "refusal_reason": chunk_row.mismatch_reason,
-                    },
-                )
+            reconciliation_id = _insert_chunked_reconciliation(cur, preview)
         conn.commit()
 
         header, chunk_rows = _load_reconciliation_bundle(conn, reconciliation_id)
@@ -381,6 +477,7 @@ def _cmd_record(args: argparse.Namespace) -> int:
                 "command": "record",
                 "recorded": True,
                 "idempotent_replay": False,
+                "superseded": False,
                 "reconciliation_id": reconciliation_id,
                 "reconciliation": chunked_recon.row_to_chunked_reconciliation_dict(header),
                 "chunks": [
