@@ -55,6 +55,10 @@ _COMMANDS: dict[str, tuple[str, object]] = {
         admin_readonly.build_production_executions_sql,
         admin_readonly.row_to_production_execution_dict,
     ),
+    "payout-reconciliations": (
+        admin_readonly.build_payout_reconciliations_sql,
+        admin_readonly.row_to_payout_reconciliation_dict,
+    ),
 }
 
 
@@ -78,6 +82,8 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
             "production-preflight-details",
             "production-executions",
             "production-execution-details",
+            "payout-reconciliations",
+            "payout-reconciliation-details",
             "unmapped-identities",
         ],
     )
@@ -112,6 +118,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Production execution id for production-execution-details",
     )
     parser.add_argument(
+        "--reconciliation-id",
+        type=int,
+        default=None,
+        help="Reconciliation id for payout-reconciliation-details",
+    )
+    parser.add_argument(
         "--limit",
         type=int,
         default=admin_readonly.DEFAULT_UNMAPPED_LIMIT,
@@ -143,7 +155,42 @@ def main(argv: list[str] | None = None) -> int:
         print("DATABASE_URL is required", file=sys.stderr)
         return 1
 
-    if args.command == "production-execution-details":
+    if args.command == "payout-reconciliation-details":
+        if args.reconciliation_id is None:
+            print(
+                "--reconciliation-id is required for payout-reconciliation-details",
+                file=sys.stderr,
+            )
+            return 1
+        header_sql = admin_readonly.build_payout_reconciliation_details_sql(
+            args.reconciliation_id
+        )
+        rows_sql = admin_readonly.build_payout_reconciliation_rows_sql(
+            args.reconciliation_id
+        )
+        header_rows = _run_query(
+            database_url,
+            header_sql,
+            admin_readonly.row_to_payout_reconciliation_dict,
+        )
+        if not header_rows:
+            print(
+                f"reconciliation not found: {args.reconciliation_id}",
+                file=sys.stderr,
+            )
+            return 1
+        row_details = _run_query(
+            database_url,
+            rows_sql,
+            admin_readonly.row_to_payout_reconciliation_row_dict,
+        )
+        payload = {
+            "command": args.command,
+            "reconciliation_id": args.reconciliation_id,
+            "reconciliation": header_rows[0],
+            "rows": row_details,
+        }
+    elif args.command == "production-execution-details":
         if args.production_execution_id is None:
             print(
                 "--production-execution-id is required for production-execution-details",

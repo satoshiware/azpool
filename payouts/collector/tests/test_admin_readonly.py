@@ -145,6 +145,26 @@ def test_production_executions_sql_is_select_only() -> None:
     admin_readonly.assert_readonly_sql(sql)
 
 
+def test_payout_reconciliations_sql_is_select_only() -> None:
+    sql = admin_readonly.build_payout_reconciliations_sql()
+    assert "sc_node_payout_reconciliations" in sql
+    admin_readonly.assert_readonly_sql(sql)
+
+
+def test_admin_command_map_includes_payout_reconciliation_commands() -> None:
+    from payouts.scripts import pool_ledger_admin_readonly as admin_cli
+
+    assert "payout-reconciliations" in admin_cli._COMMANDS
+    build_sql, row_fn = admin_cli._COMMANDS["payout-reconciliations"]
+    assert build_sql() == admin_readonly.build_payout_reconciliations_sql()
+    assert row_fn is admin_readonly.row_to_payout_reconciliation_dict
+    args = admin_cli._parse_args(
+        ["payout-reconciliation-details", "--reconciliation-id", "1"]
+    )
+    assert args.command == "payout-reconciliation-details"
+    assert args.reconciliation_id == 1
+
+
 def test_admin_command_map_includes_production_execution_commands() -> None:
     from payouts.scripts import pool_ledger_admin_readonly as admin_cli
 
