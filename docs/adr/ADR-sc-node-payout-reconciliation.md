@@ -51,3 +51,4 @@ Receiver evidence: operator exports JSON (e.g. `/tmp/sc2-wallet-transactions.jso
 - Reconciliation is not spend authorization and does not replace on-chain confirmation workflow in PR N.
 - Read-only admin: `payout-reconciliations`, `payout-reconciliation-details` (no `azc`).
 - Admin output sanitizes `source_wallet_evidence.hex` by default (`hex_omitted`, `hex_length`); `--include-raw-evidence` restores full stored JSONB for debugging.
+- `record` is idempotent on `(production_execution_id, txid)`: matching replays return the existing row; mismatched evidence is refused without mutating stored reconciliations.

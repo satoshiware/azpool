@@ -294,31 +294,6 @@ def _cmd_record(args: argparse.Namespace) -> int:
             print("production execution has no txid", file=sys.stderr)
             return 1
 
-        with conn.cursor(row_factory=dict_row) as cur:
-            cur.execute(
-                reconciliation.build_reconciliation_by_execution_txid_sql(),
-                {
-                    "production_execution_id": args.production_execution_id,
-                    "txid": txid,
-                },
-            )
-            existing = cur.fetchone()
-        if existing is not None:
-            header, rows = _load_reconciliation_bundle(conn, int(existing["id"]))
-            _emit_json(
-                {
-                    "command": "record",
-                    "recorded": False,
-                    "idempotent_replay": True,
-                    "reconciliation": reconciliation.row_to_reconciliation_dict(header),
-                    "rows": [
-                        reconciliation.row_to_reconciliation_row_dict(row)
-                        for row in rows
-                    ],
-                }
-            )
-            return 0
-
     source_payload = _run_gettransaction(
         azc_bin=args.azc_bin,
         source_wallet_name=source_wallet,
@@ -331,6 +306,51 @@ def _cmd_record(args: argparse.Namespace) -> int:
         source_payload=source_payload,
         receiver_rows=receiver_rows,
     )
+
+    with psycopg.connect(_database_url()) as conn:
+        with conn.cursor(row_factory=dict_row) as cur:
+            cur.execute(
+                reconciliation.build_reconciliation_by_execution_txid_sql(),
+                {
+                    "production_execution_id": args.production_execution_id,
+                    "txid": txid,
+                },
+            )
+            existing = cur.fetchone()
+
+        if existing is not None:
+            reconciliation_id = int(existing["id"])
+            refusal_reason = reconciliation.preview_matches_existing_reconciliation(
+                preview,
+                existing,
+            )
+            if refusal_reason is not None:
+                _emit_json(
+                    {
+                        "command": "record",
+                        "recorded": False,
+                        "idempotent_replay": False,
+                        "reconciliation_id": reconciliation_id,
+                        "refusal_reason": refusal_reason,
+                    }
+                )
+                return 1
+
+            header, rows = _load_reconciliation_bundle(conn, reconciliation_id)
+            _emit_json(
+                {
+                    "command": "record",
+                    "recorded": False,
+                    "idempotent_replay": True,
+                    "reconciliation_id": reconciliation_id,
+                    "reconciliation": reconciliation.row_to_reconciliation_dict(header),
+                    "rows": [
+                        reconciliation.row_to_reconciliation_row_dict(row)
+                        for row in rows
+                    ],
+                }
+            )
+            return 0
 
     with psycopg.connect(_database_url()) as conn:
         with conn.cursor(row_factory=dict_row) as cur:
@@ -370,6 +390,7 @@ def _cmd_record(args: argparse.Namespace) -> int:
                 "command": "record",
                 "recorded": True,
                 "idempotent_replay": False,
+                "reconciliation_id": reconciliation_id,
                 "reconciliation": reconciliation.row_to_reconciliation_dict(header),
                 "rows": [
                     reconciliation.row_to_reconciliation_row_dict(row) for row in rows

@@ -42,6 +42,8 @@ PYTHONPATH=. .venv/bin/python payouts/scripts/sc_node_payout_reconciliation.py r
   --receiver-transactions-json /tmp/sc2-wallet-transactions.json
 ```
 
+Record is **idempotent** on `(production_execution_id, txid)`. A repeat run with the same computed result returns the existing reconciliation (`recorded: false`, `idempotent_replay: true`). If an existing row disagrees with the newly computed preview (status, matched, amounts, addresses, category), the command refuses without updating the row (`refusal_reason` in JSON, exit code 1).
+
 ### Details
 
 ```bash
