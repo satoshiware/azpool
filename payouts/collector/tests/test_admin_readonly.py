@@ -163,6 +163,73 @@ def test_admin_command_map_includes_payout_reconciliation_commands() -> None:
     )
     assert args.command == "payout-reconciliation-details"
     assert args.reconciliation_id == 1
+    assert args.include_raw_evidence is False
+
+
+def test_admin_payout_reconciliations_defaults_to_sanitized_source_evidence() -> None:
+    from payouts.collector.app import sc_node_payout_reconciliation as reconciliation
+
+    raw = {
+        "txid": "abc",
+        "confirmations": 1,
+        "hex": "00" * 100,
+        "details": [],
+    }
+    row = {
+        "id": 1,
+        "production_execution_id": 1,
+        "payout_plan_id": 1,
+        "source_wallet_name": "wallet",
+        "txid": "abc",
+        "reconciliation_status": "matched",
+        "expected_amount": Decimal("1"),
+        "expected_address": "az1test",
+        "matched": True,
+        "source_wallet_evidence": raw,
+        "receiver_wallet_evidence": None,
+    }
+    result = admin_readonly.row_to_payout_reconciliation_dict(row)
+    evidence = result["source_wallet_evidence"]
+    assert isinstance(evidence, dict)
+    assert "hex" not in evidence
+    assert evidence["hex_omitted"] is True
+    assert evidence["hex_length"] == 200
+
+
+def test_admin_payout_reconciliation_details_include_raw_flag() -> None:
+    from payouts.scripts import pool_ledger_admin_readonly as admin_cli
+
+    args = admin_cli._parse_args(
+        [
+            "payout-reconciliation-details",
+            "--reconciliation-id",
+            "1",
+            "--include-raw-evidence",
+        ]
+    )
+    assert args.include_raw_evidence is True
+
+    raw = {"txid": "abc", "hex": "ff"}
+    row = {
+        "id": 1,
+        "production_execution_id": 1,
+        "payout_plan_id": 1,
+        "source_wallet_name": "wallet",
+        "txid": "abc",
+        "reconciliation_status": "matched",
+        "expected_amount": Decimal("1"),
+        "expected_address": "az1test",
+        "matched": True,
+        "source_wallet_evidence": raw,
+        "receiver_wallet_evidence": None,
+    }
+    result = admin_readonly.row_to_payout_reconciliation_dict(
+        row,
+        include_raw_evidence=True,
+    )
+    evidence = result["source_wallet_evidence"]
+    assert isinstance(evidence, dict)
+    assert evidence["hex"] == "ff"
 
 
 def test_admin_command_map_includes_production_execution_commands() -> None:

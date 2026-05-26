@@ -174,6 +174,89 @@ def test_compare_reconciliation_mismatch_when_source_confirmations_pending() -> 
     assert "source confirmations pending" in preview.mismatch_reason
 
 
+def _source_evidence_with_hex(*, hex_body: str = "ab" * 200) -> dict[str, object]:
+    return {
+        "txid": _TXID,
+        "confirmations": 3,
+        "amount": -121.875,
+        "fee": -0.0001,
+        "hex": hex_body,
+        "details": [{"address": _ADDRESS, "category": "send", "amount": -121.875}],
+        "blockhash": "0000000000000000000000000000000000000000000000000000000000000001",
+        "blockheight": 100,
+        "time": 1710000000,
+        "timereceived": 1710000001,
+        "walletconflicts": [],
+        "bip125-replaceable": "no",
+    }
+
+
+def test_sanitize_source_wallet_evidence_omits_hex_by_default() -> None:
+    raw = _source_evidence_with_hex()
+    sanitized = reconciliation.sanitize_source_wallet_evidence(raw)
+    assert sanitized is not None
+    assert "hex" not in sanitized
+    assert sanitized["hex_omitted"] is True
+    assert sanitized["hex_length"] == len(raw["hex"])
+    assert sanitized["txid"] == _TXID
+    assert sanitized["confirmations"] == 3
+    assert sanitized["details"] == raw["details"]
+    assert sanitized["blockhash"] == raw["blockhash"]
+    assert sanitized["bip125-replaceable"] == "no"
+
+
+def test_sanitize_source_wallet_evidence_include_raw_preserves_hex() -> None:
+    raw = _source_evidence_with_hex()
+    result = reconciliation.sanitize_source_wallet_evidence(raw, include_raw=True)
+    assert result is not None
+    assert result["hex"] == raw["hex"]
+    assert "hex_omitted" not in result
+
+
+def test_row_to_reconciliation_dict_defaults_to_sanitized_source_evidence() -> None:
+    raw = _source_evidence_with_hex(hex_body="cd" * 50)
+    row = {
+        "id": 1,
+        "production_execution_id": 1,
+        "payout_plan_id": 1,
+        "source_wallet_name": "wallet",
+        "txid": _TXID,
+        "reconciliation_status": "matched",
+        "expected_amount": _AMOUNT,
+        "expected_address": _ADDRESS,
+        "matched": True,
+        "source_wallet_evidence": raw,
+        "receiver_wallet_evidence": _receiver_row(),
+    }
+    result = reconciliation.row_to_reconciliation_dict(row)
+    evidence = result["source_wallet_evidence"]
+    assert isinstance(evidence, dict)
+    assert "hex" not in evidence
+    assert evidence["hex_omitted"] is True
+    assert evidence["hex_length"] == 100
+
+
+def test_row_to_reconciliation_dict_include_raw_evidence_preserves_hex() -> None:
+    raw = _source_evidence_with_hex(hex_body="ef" * 10)
+    row = {
+        "id": 1,
+        "production_execution_id": 1,
+        "payout_plan_id": 1,
+        "source_wallet_name": "wallet",
+        "txid": _TXID,
+        "reconciliation_status": "matched",
+        "expected_amount": _AMOUNT,
+        "expected_address": _ADDRESS,
+        "matched": True,
+        "source_wallet_evidence": raw,
+        "receiver_wallet_evidence": None,
+    }
+    result = reconciliation.row_to_reconciliation_dict(row, include_raw_evidence=True)
+    evidence = result["source_wallet_evidence"]
+    assert isinstance(evidence, dict)
+    assert evidence["hex"] == raw["hex"]
+
+
 def test_record_insert_params_wrap_jsonb_evidence() -> None:
     source = reconciliation.parse_source_gettransaction(_source_payload(), _TXID)
     receiver = reconciliation.parse_receiver_transactions_json([_receiver_row()], _TXID)

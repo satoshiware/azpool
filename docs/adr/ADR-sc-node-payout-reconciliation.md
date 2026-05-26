@@ -50,3 +50,4 @@ Receiver evidence: operator exports JSON (e.g. `/tmp/sc2-wallet-transactions.jso
 - Operators can document post-payout alignment across ledger, source wallet, and SC-node receive export.
 - Reconciliation is not spend authorization and does not replace on-chain confirmation workflow in PR N.
 - Read-only admin: `payout-reconciliations`, `payout-reconciliation-details` (no `azc`).
+- Admin output sanitizes `source_wallet_evidence.hex` by default (`hex_omitted`, `hex_length`); `--include-raw-evidence` restores full stored JSONB for debugging.

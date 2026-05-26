@@ -134,6 +134,14 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Filter reward-events by maturity_status",
     )
+    parser.add_argument(
+        "--include-raw-evidence",
+        action="store_true",
+        help=(
+            "Include full source_wallet_evidence hex for payout-reconciliations "
+            "and payout-reconciliation-details (default omits hex)"
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -168,11 +176,11 @@ def main(argv: list[str] | None = None) -> int:
         rows_sql = admin_readonly.build_payout_reconciliation_rows_sql(
             args.reconciliation_id
         )
-        header_rows = _run_query(
-            database_url,
-            header_sql,
-            admin_readonly.row_to_payout_reconciliation_dict,
+        reconciliation_row_fn = lambda row: admin_readonly.row_to_payout_reconciliation_dict(
+            row,
+            include_raw_evidence=args.include_raw_evidence,
         )
+        header_rows = _run_query(database_url, header_sql, reconciliation_row_fn)
         if not header_rows:
             print(
                 f"reconciliation not found: {args.reconciliation_id}",
@@ -190,6 +198,8 @@ def main(argv: list[str] | None = None) -> int:
             "reconciliation": header_rows[0],
             "rows": row_details,
         }
+        if args.include_raw_evidence:
+            payload["include_raw_evidence"] = True
     elif args.command == "production-execution-details":
         if args.production_execution_id is None:
             print(
@@ -352,10 +362,17 @@ def main(argv: list[str] | None = None) -> int:
             sql = build_sql(args.maturity_status)
         else:
             sql = build_sql()
+        if args.command == "payout-reconciliations":
+            row_fn = lambda row: admin_readonly.row_to_payout_reconciliation_dict(
+                row,
+                include_raw_evidence=args.include_raw_evidence,
+            )
         rows = _run_query(database_url, sql, row_fn)
         payload = {"command": args.command, "rows": rows}
         if args.command == "reward-events" and args.maturity_status:
             payload["maturity_status"] = args.maturity_status
+        if args.command == "payout-reconciliations" and args.include_raw_evidence:
+            payload["include_raw_evidence"] = True
 
     json.dump(payload, sys.stdout, indent=2, sort_keys=True)
     sys.stdout.write("\n")
