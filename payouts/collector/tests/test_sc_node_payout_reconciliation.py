@@ -6,6 +6,7 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
+from psycopg.types.json import Jsonb
 
 AZPOOL_ROOT = Path(__file__).resolve().parents[3]
 if str(AZPOOL_ROOT) not in sys.path:
@@ -171,6 +172,35 @@ def test_compare_reconciliation_mismatch_when_source_confirmations_pending() -> 
     assert preview.reconciliation_status == reconciliation.RECONCILIATION_STATUS_MISMATCH
     assert preview.mismatch_reason is not None
     assert "source confirmations pending" in preview.mismatch_reason
+
+
+def test_record_insert_params_wrap_jsonb_evidence() -> None:
+    source = reconciliation.parse_source_gettransaction(_source_payload(), _TXID)
+    receiver = reconciliation.parse_receiver_transactions_json([_receiver_row()], _TXID)
+    preview = reconciliation.compare_reconciliation(
+        _confirmed_execution(),
+        [_execution_row()],
+        source,
+        receiver,
+    )
+    params = reconciliation_cli._reconciliation_insert_params(preview, notes="audit")
+    assert isinstance(params["source_wallet_evidence"], Jsonb)
+    assert isinstance(params["receiver_wallet_evidence"], Jsonb)
+    assert params["source_wallet_evidence"].obj == preview.source_wallet_evidence
+    assert params["receiver_wallet_evidence"].obj == preview.receiver_wallet_evidence
+
+
+def test_record_insert_params_receiver_jsonb_none_when_missing() -> None:
+    source = reconciliation.parse_source_gettransaction(_source_payload(), _TXID)
+    preview = reconciliation.compare_reconciliation(
+        _confirmed_execution(),
+        [_execution_row()],
+        source,
+        None,
+    )
+    params = reconciliation_cli._reconciliation_insert_params(preview, notes=None)
+    assert isinstance(params["source_wallet_evidence"], Jsonb)
+    assert params["receiver_wallet_evidence"] is None
 
 
 def test_compare_reconciliation_draft_when_receiver_missing() -> None:
