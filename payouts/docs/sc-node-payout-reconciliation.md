@@ -66,6 +66,8 @@ PYTHONPATH=. .venv/bin/python payouts/scripts/pool_ledger_admin_readonly.py payo
 
 Admin commands are SELECT-only and do not call `azc`.
 
+By default, admin JSON **sanitizes** `source_wallet_evidence`: the large raw transaction `hex` field is omitted and replaced with `hex_omitted: true` and `hex_length`. Full hex is still stored in Postgres; only display output is trimmed. Use `--include-raw-evidence` to return the stored evidence unchanged. Receiver evidence is returned as stored (typically small).
+
 ## Status semantics
 
 | Status | Meaning |

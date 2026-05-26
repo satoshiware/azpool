@@ -263,8 +263,15 @@ def build_payout_reconciliation_rows_sql(reconciliation_id: int) -> str:
     )
 
 
-def row_to_payout_reconciliation_dict(row: Mapping[str, Any]) -> dict[str, Any]:
-    return sc_node_payout_reconciliation.row_to_reconciliation_dict(row)
+def row_to_payout_reconciliation_dict(
+    row: Mapping[str, Any],
+    *,
+    include_raw_evidence: bool = False,
+) -> dict[str, Any]:
+    return sc_node_payout_reconciliation.row_to_reconciliation_dict(
+        row,
+        include_raw_evidence=include_raw_evidence,
+    )
 
 
 def row_to_payout_reconciliation_row_dict(row: Mapping[str, Any]) -> dict[str, Any]:

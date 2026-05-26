@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from decimal import ROUND_DOWN, Decimal
@@ -644,6 +645,42 @@ def compare_reconciliation(
     )
 
 
+def _normalize_evidence_mapping(evidence: object) -> dict[str, Any] | None:
+    if evidence is None:
+        return None
+    if isinstance(evidence, str):
+        try:
+            parsed = json.loads(evidence)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(parsed, dict):
+            return None
+        return dict(parsed)
+    if isinstance(evidence, Mapping):
+        return dict(evidence)
+    return None
+
+
+def sanitize_source_wallet_evidence(
+    evidence: object,
+    *,
+    include_raw: bool = False,
+) -> dict[str, Any] | None:
+    """Return source wallet evidence for display; omit large hex by default."""
+    normalized = _normalize_evidence_mapping(evidence)
+    if normalized is None:
+        return None
+    if include_raw:
+        return normalized
+
+    result = dict(normalized)
+    hex_value = result.pop("hex", None)
+    if hex_value is not None:
+        result["hex_omitted"] = True
+        result["hex_length"] = len(str(hex_value))
+    return result
+
+
 def reconciliation_preview_to_dict(preview: ReconciliationPreview) -> dict[str, Any]:
     return {
         "production_execution_id": preview.production_execution_id,
@@ -698,7 +735,11 @@ def reconciliation_preview_to_dict(preview: ReconciliationPreview) -> dict[str, 
     }
 
 
-def row_to_reconciliation_dict(row: Mapping[str, Any]) -> dict[str, Any]:
+def row_to_reconciliation_dict(
+    row: Mapping[str, Any],
+    *,
+    include_raw_evidence: bool = False,
+) -> dict[str, Any]:
     return {
         "id": int(row["id"]),
         "production_execution_id": int(row["production_execution_id"]),
@@ -737,7 +778,10 @@ def row_to_reconciliation_dict(row: Mapping[str, Any]) -> dict[str, Any]:
         "receiver_address": row.get("receiver_address"),
         "matched": bool(row.get("matched")),
         "mismatch_reason": row.get("mismatch_reason"),
-        "source_wallet_evidence": row.get("source_wallet_evidence"),
+        "source_wallet_evidence": sanitize_source_wallet_evidence(
+            row.get("source_wallet_evidence"),
+            include_raw=include_raw_evidence,
+        ),
         "receiver_wallet_evidence": row.get("receiver_wallet_evidence"),
         "notes": row.get("notes"),
         "created_at": planner._serialize_datetime(row.get("created_at")),
