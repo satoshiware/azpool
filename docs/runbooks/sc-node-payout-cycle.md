@@ -41,6 +41,8 @@ Deep links:
 | Production execute | [sc-node-production-payout-executor.md](../payouts/docs/sc-node-production-payout-executor.md) |
 | Chunked production execute | [sc-node-production-payout-chunked-executor.md](../payouts/docs/sc-node-production-payout-chunked-executor.md) |
 | Reconciliation | [sc-node-payout-reconciliation.md](../payouts/docs/sc-node-payout-reconciliation.md) |
+| Receiver evidence export | [sc-node-receiver-evidence-export.md](../payouts/docs/sc-node-receiver-evidence-export.md) |
+| Payout status summary | [sc-node-payout-status-summary.md](../payouts/docs/sc-node-payout-status-summary.md) |
 | Admin JSON | [pool-ledger-admin.md](pool-ledger-admin.md) |
 
 ## Common environment
@@ -252,7 +254,17 @@ After execution is **confirmed**.
 
 ### 9a. Single-send execution (one txid)
 
-- [ ] Export SC-node **receive-side** JSON manually (no bearer token / no HTTP from reconciliation script). Save path e.g. `/tmp/sc2-wallet-transactions.json`
+- [ ] Export SC-node **receive-side** JSON using the guarded read-only exporter (**not** raw `azcoin-cli`):
+  ```bash
+  export PAYOUT_RECEIVER_EVIDENCE_WALLET_ALLOWLIST=SC2TESTWALLETLISTENER
+  .venv/bin/python payouts/scripts/sc_node_receiver_evidence_export.py \
+    --wallet SC2TESTWALLETLISTENER \
+    --count 500 \
+    --receive-only \
+    --azc-bin /usr/local/bin/azc-payout-readonly \
+    --output /tmp/sc2-wallet-transactions.json
+  ```
+  See [sc-node-receiver-evidence-export.md](../payouts/docs/sc-node-receiver-evidence-export.md). **Do not** export from `wallet` or `SUPPORT`. **Do not** send coins manually on SC nodes to fix mismatches.
 - [ ] `sc_node_payout_reconciliation.py preview` with `--receiver-transactions-json` and `--azc-bin /usr/local/bin/azc-payout-readonly`
 - [ ] `record` — expect `reconciliation_status: matched` when evidence aligns
 - [ ] **Idempotent replay:** Re-running `record` with the same evidence should return `idempotent_replay: true`, `recorded: false`
@@ -271,7 +283,16 @@ See [sc-node-payout-reconciliation.md](../payouts/docs/sc-node-payout-reconcilia
 Use when production execution has per-chunk rows (e.g. cycle #2 `production_execution_id=3`, nine chunks).
 
 - [ ] Apply migration `014` if not already applied
-- [ ] Export SC-node receive JSON covering **all** chunk txids (same manual export rules — no HTTP from script)
+- [ ] Export SC-node receive JSON covering **all** chunk txids using the read-only exporter (same rules as §9a — no HTTP, no raw `azcoin-cli`):
+  ```bash
+  export PAYOUT_RECEIVER_EVIDENCE_WALLET_ALLOWLIST=SC2TESTWALLETLISTENER
+  .venv/bin/python payouts/scripts/sc_node_receiver_evidence_export.py \
+    --wallet SC2TESTWALLETLISTENER \
+    --count 500 \
+    --receive-only \
+    --azc-bin /usr/local/bin/azc-payout-readonly \
+    --output /tmp/sc2-wallet-transactions.json
+  ```
 - [ ] Source-only preview (optional sanity check before receiver export):
   ```bash
   .venv/bin/python payouts/scripts/sc_node_chunked_payout_reconciliation.py preview \
@@ -284,6 +305,12 @@ Use when production execution has per-chunk rows (e.g. cycle #2 `production_exec
 - [ ] `record` — idempotent on active reconciliation for `production_execution_id`
 - [ ] If a prior **mismatch** used stale receiver JSON: re-export fresh JSON, `preview` until `matched: true`, then `record` with `--supersede-reconciliation-id` + `--supersede-reason` (matched rows cannot be superseded)
 - [ ] `details --reconciliation-id CHUNKED_RECONCILIATION_ID` — verify `is_active`, `superseded_by_reconciliation_id`, `supersedes_reconciliation_id` as needed
+- [ ] Compact status summary (read-only DB):
+  ```bash
+  .venv/bin/python payouts/scripts/sc_node_payout_status_summary.py \
+    --production-execution-id PRODUCTION_EXECUTION_ID
+  ```
+  Expect `execution_status: confirmed`, `active_reconciliation.matched: true`, equal chunk counts for a closed cycle. See [sc-node-payout-status-summary.md](../payouts/docs/sc-node-payout-status-summary.md).
 - [ ] Add `--include-raw-evidence` only for debugging
 - [ ] Admin:
   ```bash
@@ -307,6 +334,7 @@ See [sc-node-chunked-payout-reconciliation.md](../payouts/docs/sc-node-chunked-p
 | **Planned amount** exceeds reserve / trusted balance | Re-plan or wait for balance |
 | **Address drift** vs registry | Update registry or plan before production |
 | Wallet **wrapper refuses** RPC (sudoers / guard script) | Fix ops path; no raw `azcoin-cli` bypass |
+| **Manual off-ledger sends** on SC nodes to “fix” reconciliation | Stop — re-export receiver evidence and use supersede retry only |
 | Source vs receiver **evidence mismatch** | Hold funds reconciliation; verify txid/address/amount |
 | **Duplicate execution** for same plan (sent/confirmed) | Do not second `execute-real`; use details/admin |
 | **Unexpected DB row counts** (duplicate plans, orphan executions) | SQL review; no ad-hoc deletes |
@@ -344,6 +372,7 @@ The following are **historical facts** from the first production SC-node payout.
 - [ ] `PRODUCTION_PREFLIGHT_ID` passed
 - [ ] `PRODUCTION_EXECUTION_ID` confirmed with `TXID`
 - [ ] `RECONCILIATION_ID` matched (or documented mismatch hold)
+- [ ] Payout status summary shows expected execution + active reconciliation state
 - [ ] Admin reconciliations list shows expected row
 - [ ] Cycle log archived for auditors
 
