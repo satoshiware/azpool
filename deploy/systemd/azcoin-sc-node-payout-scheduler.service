@@ -1,0 +1,20 @@
+[Unit]
+Description=AZCoin SC-node payout scheduler (report-only default)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=azledger
+Group=azledger
+WorkingDirectory=/opt/azcoin-super/src/azpool
+Environment=PYTHONPATH=/opt/azcoin-super/src/azpool
+EnvironmentFile=-/etc/azcoin-super/pool-ledger/collector.env
+# DISABLED BY DEFAULT: set explicit plan/preflight IDs before enabling timer.
+# Replace placeholder IDs; default mode is report-only (no sends).
+ExecStart=/opt/azcoin-super/src/azpool/.venv/bin/python payouts/scripts/sc_node_payout_scheduler.py --scheduler-mode report-only --payout-plan-id 0 --production-preflight-id 0 --recommended-execution-mode halt
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
