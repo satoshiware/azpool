@@ -43,6 +43,7 @@ Deep links:
 | Reconciliation | [sc-node-payout-reconciliation.md](../payouts/docs/sc-node-payout-reconciliation.md) |
 | Receiver evidence export | [sc-node-receiver-evidence-export.md](../payouts/docs/sc-node-receiver-evidence-export.md) |
 | Payout status summary | [sc-node-payout-status-summary.md](../payouts/docs/sc-node-payout-status-summary.md) |
+| Cycle readiness gate | [sc-node-payout-cycle-readiness.md](../payouts/docs/sc-node-payout-cycle-readiness.md) |
 | Admin JSON | [pool-ledger-admin.md](pool-ledger-admin.md) |
 
 ## Common environment
@@ -311,6 +312,12 @@ Use when production execution has per-chunk rows (e.g. cycle #2 `production_exec
     --production-execution-id PRODUCTION_EXECUTION_ID
   ```
   Expect `execution_status: confirmed`, `active_reconciliation.matched: true`, equal chunk counts for a closed cycle. See [sc-node-payout-status-summary.md](../payouts/docs/sc-node-payout-status-summary.md).
+- [ ] Cycle readiness gate (automation runway):
+  ```bash
+  .venv/bin/python payouts/scripts/sc_node_payout_cycle_readiness.py \
+    --production-execution-id PRODUCTION_EXECUTION_ID
+  ```
+  Expect `Verdict: CLOSED` and exit code 0 for a fully matched cycle. Use `--json` for automation. See [sc-node-payout-cycle-readiness.md](../payouts/docs/sc-node-payout-cycle-readiness.md).
 - [ ] Add `--include-raw-evidence` only for debugging
 - [ ] Admin:
   ```bash
@@ -373,6 +380,7 @@ The following are **historical facts** from the first production SC-node payout.
 - [ ] `PRODUCTION_EXECUTION_ID` confirmed with `TXID`
 - [ ] `RECONCILIATION_ID` matched (or documented mismatch hold)
 - [ ] Payout status summary shows expected execution + active reconciliation state
+- [ ] Cycle readiness gate returns `CLOSED` (exit 0) when cycle is complete
 - [ ] Admin reconciliations list shows expected row
 - [ ] Cycle log archived for auditors
 
