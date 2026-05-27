@@ -325,17 +325,25 @@ def test_script_execute_real_uses_sendtoaddress() -> None:
 def test_app_module_has_no_forbidden_wallet_rpcs_except_sendtoaddress_path() -> None:
     path = AZPOOL_ROOT / "payouts/collector/app/sc_node_payout_production_executor.py"
     text = path.read_text(encoding="utf-8")
-    guard_block = re.compile(
+    guard_patterns = (
         r"_FORBIDDEN_WALLET_RPC_KEYWORDS = re\.compile\([\s\S]*?\)\n",
-        re.MULTILINE,
+        r"_FORBIDDEN_MARK_CONFIRMED_RPC_KEYWORDS = re\.compile\([\s\S]*?\)\n",
     )
     send_block = re.search(
         r"def build_sendtoaddress_argv[\s\S]*?return argv\n",
         text,
     )
-    scrubbed = guard_block.sub("", text, count=1)
+    gettransaction_block = re.search(
+        r"def build_mark_confirmed_gettransaction_argv[\s\S]*?return argv\n",
+        text,
+    )
+    scrubbed = text
+    for pattern in guard_patterns:
+        scrubbed = re.compile(pattern, re.MULTILINE).sub("", scrubbed, count=1)
     if send_block:
         scrubbed = scrubbed.replace(send_block.group(0), "")
+    if gettransaction_block:
+        scrubbed = scrubbed.replace(gettransaction_block.group(0), "")
     assert _FORBIDDEN_RPC.search(scrubbed) is None
 
 
@@ -383,3 +391,82 @@ def test_calculate_execution_guardrails_default_fifty_percent_reserve() -> None:
     )
     assert result["reserve_amount"] == Decimal("332.187406725000")
     assert result["spendable_after_reserve"] == Decimal("332.187406725000")
+
+
+def _sent_execution(*, txid: str = "83096125cfa614208edbb04672902fcbb953338c80587c3326afa8719c15fbb8") -> dict[str, object]:
+    return {
+        "id": 5,
+        "status": executor.EXECUTION_STATUS_SENT,
+        "txid": txid,
+    }
+
+
+def test_mark_confirmed_requires_confirm_chain_evidence() -> None:
+    refusal = executor.evaluate_mark_confirmed_chain_prereq_refusal(
+        execution=_sent_execution(),
+        confirm_chain_evidence=False,
+        source_wallet_name=_SOURCE_WALLET,
+    )
+    assert refusal == "mark-confirmed requires --confirm-chain-evidence"
+
+
+def test_mark_confirmed_refuses_missing_txid() -> None:
+    execution = _sent_execution(txid="")
+    refusal = executor.evaluate_mark_confirmed_chain_prereq_refusal(
+        execution=execution,
+        confirm_chain_evidence=True,
+        source_wallet_name=_SOURCE_WALLET,
+    )
+    assert refusal == "production execution txid is required for chain evidence check"
+
+
+def test_mark_confirmed_refuses_zero_confirmations() -> None:
+    refusal = executor.evaluate_mark_confirmed_confirmations_refusal(
+        confirmations=0,
+        min_confirmations=1,
+    )
+    assert refusal == "gettransaction confirmations 0 < required 1"
+
+
+def test_mark_confirmed_allows_confirmations_ge_min() -> None:
+    refusal = executor.evaluate_mark_confirmed_confirmations_refusal(
+        confirmations=1,
+        min_confirmations=1,
+    )
+    assert refusal is None
+
+
+def test_mark_confirmed_idempotent_if_already_confirmed() -> None:
+    confirmed = {
+        "id": 5,
+        "status": executor.EXECUTION_STATUS_CONFIRMED,
+        "txid": "83096125cfa614208edbb04672902fcbb953338c80587c3326afa8719c15fbb8",
+    }
+    refusal = executor.evaluate_mark_confirmed_refusal(confirmed)
+    assert refusal is None
+
+
+def test_mark_confirmed_gettransaction_argv_is_readonly_only() -> None:
+    txid = "83096125cfa614208edbb04672902fcbb953338c80587c3326afa8719c15fbb8"
+    argv = executor.build_mark_confirmed_gettransaction_argv(
+        azc_bin="/usr/local/bin/azc-payout-readonly",
+        source_wallet_name=_SOURCE_WALLET,
+        txid=txid,
+    )
+    assert argv == [
+        "/usr/local/bin/azc-payout-readonly",
+        "-rpcwallet=wallet",
+        "gettransaction",
+        txid,
+    ]
+    assert _FORBIDDEN_RPC.search(" ".join(argv)) is None
+
+
+def test_mark_confirmed_script_block_uses_gettransaction_not_sendtoaddress() -> None:
+    source = (
+        AZPOOL_ROOT / "payouts/scripts/sc_node_payout_production_executor.py"
+    ).read_text(encoding="utf-8")
+    mark_block = source.split("def _cmd_mark_confirmed")[1].split("def _cmd_details")[0]
+    assert "gettransaction" in mark_block
+    assert "sendtoaddress" not in mark_block
+    assert "walletpassphrase" not in mark_block

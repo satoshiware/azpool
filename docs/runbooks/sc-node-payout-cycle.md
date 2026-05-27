@@ -121,6 +121,8 @@ See [support-wallet-reward-listener.md](support-wallet-reward-listener.md).
 
 ## 3. Credit ledger cycle
 
+Coverage windows are **half-open** `[coverage_start, coverage_end)`: events at `coverage_end` are excluded. Set the next cycle's `CREDIT_COVERAGE_START` to the previous cycle's `CREDIT_COVERAGE_END` without re-selecting the boundary event. See [sc-node-credit-ledger.md](sc-node-credit-ledger.md) for the Cycle #3 boundary overpayment note.
+
 - [ ] **Preview** with explicit coverage (required before write unless using documented default with eyes open):
   ```bash
   .venv/bin/python payouts/scripts/sc_node_credit_ledger.py preview \
@@ -286,8 +288,10 @@ See [sc-node-production-payout-chunked-executor.md](../payouts/docs/sc-node-prod
 Only after on-chain confirmations are visible to the operator.
 
 - [ ] `gettransaction` shows `confirmations >= 1` (prefer higher before closing books)
-- [ ] `mark-confirmed --production-execution-id PRODUCTION_EXECUTION_ID`
+- [ ] `mark-confirmed --production-execution-id PRODUCTION_EXECUTION_ID --confirm-chain-evidence --source-wallet-name wallet --azc-bin /usr/local/bin/azc-payout-readonly --min-confirmations 1`
 - [ ] `details` + admin `production-execution-details` — status `confirmed`, `txid` matches `TXID`
+
+`mark-confirmed` **requires** `--confirm-chain-evidence` and refuses when read-only `gettransaction` reports `confirmations` below `--min-confirmations` (default 1). Already-`confirmed` executions remain idempotent without re-checking the chain.
 
 ---
 

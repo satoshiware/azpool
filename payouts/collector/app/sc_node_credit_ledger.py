@@ -153,13 +153,50 @@ FROM support_wallet_reward_events
 WHERE wallet_name = %(wallet_name)s
   AND maturity_status = 'mature'
   AND event_time IS NOT NULL
-  AND event_time >= %(coverage_start)s
-  AND event_time <= %(coverage_end)s
+  AND event_time < %(coverage_end)s
+  AND (
+    (
+      %(exclude_coverage_start_boundary)s IS FALSE
+      AND event_time >= %(coverage_start)s
+    )
+    OR (
+      %(exclude_coverage_start_boundary)s IS TRUE
+      AND event_time > %(coverage_start)s
+    )
+  )
 ORDER BY event_time, id
 """.strip()
     _assert_readonly_sql(sql)
     assert "maturity_status = 'mature'" in sql
+    assert "event_time < %(coverage_end)s" in sql
     return sql
+
+
+def build_prior_credit_run_coverage_end_match_sql() -> str:
+    sql = """
+SELECT EXISTS (
+  SELECT 1
+  FROM sc_node_reward_credit_runs r
+  WHERE r.wallet_name = %(wallet_name)s
+    AND r.coverage_end = %(coverage_start)s
+) AS exclude_coverage_start_boundary
+""".strip()
+    _assert_readonly_sql(sql)
+    return sql
+
+
+def reward_event_time_in_coverage(
+    event_time: datetime,
+    *,
+    coverage_start: datetime,
+    coverage_end: datetime,
+    exclude_coverage_start_boundary: bool = False,
+) -> bool:
+    if event_time >= coverage_end:
+        return False
+    if exclude_coverage_start_boundary:
+        return event_time > coverage_start
+    return event_time >= coverage_start
 
 
 def build_sc_node_work_share_sql() -> str:
@@ -270,6 +307,48 @@ INSERT INTO sc_node_reward_credit_run_events (
 )
 """.strip()
     _assert_insert_sql_targets_credit_tables_only(sql)
+    return sql
+
+
+def build_existing_reward_event_links_sql() -> str:
+    sql = """
+SELECT
+  e.reward_event_id,
+  e.credit_run_id
+FROM sc_node_reward_credit_run_events e
+WHERE e.reward_event_id = ANY(%(reward_event_ids)s)
+ORDER BY e.reward_event_id, e.credit_run_id
+""".strip()
+    _assert_readonly_sql(sql)
+    return sql
+
+
+def build_payout_plans_for_credit_run_sql() -> str:
+    sql = """
+SELECT
+  id,
+  credit_run_id,
+  status
+FROM sc_node_payout_plans
+WHERE credit_run_id = %(credit_run_id)s
+ORDER BY id
+""".strip()
+    _assert_readonly_sql(sql)
+    return sql
+
+
+def build_production_executions_for_credit_run_sql() -> str:
+    sql = """
+SELECT
+  pe.id,
+  pe.status,
+  pp.credit_run_id
+FROM sc_node_payout_production_executions pe
+JOIN sc_node_payout_plans pp ON pp.id = pe.payout_plan_id
+WHERE pp.credit_run_id = %(credit_run_id)s
+ORDER BY pe.id
+""".strip()
+    _assert_readonly_sql(sql)
     return sql
 
 
@@ -412,6 +491,33 @@ def resolve_operator_coverage(
         reward_coverage_end=reward_coverage_end,
         coverage_gap=False,
         operator_selected=True,
+    )
+
+
+def evaluate_write_draft_duplicate_refusal(
+    *,
+    existing_links: list[Mapping[str, Any]],
+    payout_plans: list[Mapping[str, Any]],
+    production_executions: list[Mapping[str, Any]],
+) -> str | None:
+    if not existing_links:
+        return None
+    first = existing_links[0]
+    credit_run_id = _to_int(first.get("credit_run_id"))
+    base = f"reward event already linked to credit_run_id={credit_run_id}"
+    if production_executions:
+        exec_ids = ", ".join(str(_to_int(row.get("id"))) for row in production_executions)
+        return (
+            f"{base}; credit_run has production execution(s) "
+            f"[{exec_ids}] — duplicate draft refused"
+        )
+    if payout_plans:
+        plan_ids = ", ".join(str(_to_int(row.get("id"))) for row in payout_plans)
+        return (
+            f"{base}; credit_run has payout plan(s) [{plan_ids}] — duplicate draft refused"
+        )
+    return (
+        f"{base}; existing unpaid duplicate draft — manual cleanup required before re-draft"
     )
 
 
