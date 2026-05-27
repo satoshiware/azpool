@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from decimal import Decimal, ROUND_DOWN
-from typing import Any, Mapping
+from payouts.collector.app import sc_node_payout_correction as payout_correction
 
 DEFAULT_RESERVE_FRACTION = Decimal("0.50")
 PLAN_STATUSES = frozenset({"draft", "reviewed", "void", "executed"})
@@ -39,6 +39,8 @@ class PayoutPlanRowPreview:
     sc_node_id: str
     sc_node_display_name: str | None
     payout_address: str
+    gross_credit_amount: Decimal
+    correction_amount: Decimal
     payout_amount: Decimal
 
 
@@ -51,8 +53,11 @@ class PayoutPlanPreview:
     reserve_amount: Decimal
     max_spendable_amount: Decimal
     planned_amount_total: Decimal
+    gross_planned_amount_total: Decimal
+    correction_amount_total: Decimal
     row_count: int
     rows: tuple[PayoutPlanRowPreview, ...]
+    payout_correction_id: int | None
     plan_allowed: bool
     refusal_reason: str | None
 
@@ -190,7 +195,8 @@ INSERT INTO sc_node_payout_plans (
   max_spendable_amount,
   planned_amount_total,
   row_count,
-  notes
+  notes,
+  payout_correction_id
 ) VALUES (
   %(credit_run_id)s,
   %(wallet_name)s,
@@ -201,7 +207,8 @@ INSERT INTO sc_node_payout_plans (
   %(max_spendable_amount)s,
   %(planned_amount_total)s,
   %(row_count)s,
-  %(notes)s
+  %(notes)s,
+  %(payout_correction_id)s
 )
 RETURNING id
 """.strip()
@@ -217,6 +224,8 @@ INSERT INTO sc_node_payout_plan_rows (
   sc_node_id,
   sc_node_display_name,
   payout_address,
+  gross_credit_amount,
+  correction_amount,
   payout_amount,
   row_status
 ) VALUES (
@@ -225,6 +234,8 @@ INSERT INTO sc_node_payout_plan_rows (
   %(sc_node_id)s,
   %(sc_node_display_name)s,
   %(payout_address)s,
+  %(gross_credit_amount)s,
+  %(correction_amount)s,
   %(payout_amount)s,
   %(row_status)s
 )
@@ -247,6 +258,7 @@ SELECT
   planned_amount_total,
   row_count,
   notes,
+  payout_correction_id,
   created_at,
   updated_at
 FROM sc_node_payout_plans
@@ -271,6 +283,7 @@ SELECT
   planned_amount_total,
   row_count,
   notes,
+  payout_correction_id,
   created_at,
   updated_at
 FROM sc_node_payout_plans
@@ -290,6 +303,8 @@ SELECT
   sc_node_id,
   sc_node_display_name,
   payout_address,
+  gross_credit_amount,
+  correction_amount,
   payout_amount,
   row_status,
   created_at,
@@ -361,6 +376,7 @@ def build_payout_plan_preview(
     credits: list[Mapping[str, Any]],
     address_lookup: dict[str, list[Mapping[str, Any]]],
     existing_draft_plan_id: int | None = None,
+    correction: Mapping[str, Any] | None = None,
 ) -> PayoutPlanPreview:
     refusal_parts: list[str] = []
 
@@ -377,6 +393,24 @@ def build_payout_plan_preview(
 
     if not credits:
         refusal_parts.append("credit run has no draft credits")
+
+    sc_node_ids = {str(credit["sc_node_id"]) for credit in credits}
+    correction_sc_node_id: str | None = None
+    correction_amount = Decimal("0")
+    payout_correction_id: int | None = None
+    if correction is not None:
+        payout_correction_id = _to_int(correction.get("id"))
+        correction_refusal = payout_correction.evaluate_correction_for_plan_refusal(
+            correction=correction,
+            wallet_name=wallet_name,
+            credit_run_id=credit_run_id,
+            sc_node_ids=sc_node_ids,
+        )
+        if correction_refusal:
+            refusal_parts.append(correction_refusal)
+        else:
+            correction_sc_node_id = str(correction.get("sc_node_id"))
+            correction_amount = _to_decimal(correction.get("amount"))
 
     reserve_amount = compute_reserve_amount(trusted_balance_snapshot, reserve_fraction)
     max_spendable_amount = compute_max_spendable_amount(
@@ -396,16 +430,42 @@ def build_payout_plan_preview(
             refusal_parts.append(address_refusal)
             continue
         assert payout_address is not None
+        gross_credit_amount = _to_decimal(credit.get("credit_amount"))
+        row_correction_amount = Decimal("0")
+        if (
+            correction_sc_node_id is not None
+            and sc_node_id == correction_sc_node_id
+        ):
+            row_correction_amount = correction_amount
+            amount_refusal = payout_correction.evaluate_correction_amount_refusal(
+                gross_credit_amount=gross_credit_amount,
+                correction_amount=row_correction_amount,
+            )
+            if amount_refusal:
+                refusal_parts.append(amount_refusal)
+                continue
+        _, _, net_payout_amount = payout_correction.apply_correction_to_row_amounts(
+            gross_credit_amount=gross_credit_amount,
+            correction_amount=row_correction_amount,
+        )
         rows.append(
             PayoutPlanRowPreview(
                 credit_id=int(credit["id"]),
                 sc_node_id=sc_node_id,
                 sc_node_display_name=credit.get("sc_node_display_name"),
                 payout_address=payout_address,
-                payout_amount=_to_decimal(credit.get("credit_amount")),
+                gross_credit_amount=gross_credit_amount,
+                correction_amount=row_correction_amount,
+                payout_amount=net_payout_amount,
             )
         )
 
+    gross_planned_amount_total = sum(
+        (row.gross_credit_amount for row in rows), Decimal("0")
+    )
+    correction_amount_total = sum(
+        (row.correction_amount for row in rows), Decimal("0")
+    )
     planned_amount_total = sum((row.payout_amount for row in rows), Decimal("0"))
     spend_refusal = evaluate_spend_cap_refusal(
         planned_amount_total=planned_amount_total,
@@ -423,8 +483,11 @@ def build_payout_plan_preview(
         reserve_amount=reserve_amount,
         max_spendable_amount=max_spendable_amount,
         planned_amount_total=planned_amount_total,
+        gross_planned_amount_total=gross_planned_amount_total,
+        correction_amount_total=correction_amount_total,
         row_count=len(rows),
         rows=tuple(rows),
+        payout_correction_id=payout_correction_id,
         plan_allowed=refusal_reason is None,
         refusal_reason=refusal_reason,
     )
@@ -466,7 +529,12 @@ def payout_plan_preview_to_dict(preview: PayoutPlanPreview) -> dict[str, Any]:
         "trusted_balance_snapshot": _serialize_numeric(preview.trusted_balance_snapshot),
         "reserve_amount": _serialize_numeric(preview.reserve_amount),
         "max_spendable_amount": _serialize_numeric(preview.max_spendable_amount),
+        "gross_planned_amount_total": _serialize_numeric(
+            preview.gross_planned_amount_total
+        ),
+        "correction_amount_total": _serialize_numeric(preview.correction_amount_total),
         "planned_amount_total": _serialize_numeric(preview.planned_amount_total),
+        "payout_correction_id": preview.payout_correction_id,
         "row_count": preview.row_count,
         "rows": [
             {
@@ -474,6 +542,9 @@ def payout_plan_preview_to_dict(preview: PayoutPlanPreview) -> dict[str, Any]:
                 "sc_node_id": row.sc_node_id,
                 "sc_node_display_name": row.sc_node_display_name,
                 "payout_address": row.payout_address,
+                "gross_credit_amount": _serialize_numeric(row.gross_credit_amount),
+                "correction_amount": _serialize_numeric(row.correction_amount),
+                "net_payout_amount": _serialize_numeric(row.payout_amount),
                 "payout_amount": _serialize_numeric(row.payout_amount),
             }
             for row in preview.rows
@@ -505,6 +576,7 @@ def row_to_payout_plan_dict(row: Mapping[str, Any]) -> dict[str, Any]:
         "planned_amount_total": _serialize_numeric(
             _to_decimal(row.get("planned_amount_total"))
         ),
+        "payout_correction_id": _optional_int(row.get("payout_correction_id")),
         "row_count": _to_int(row.get("row_count")),
         "notes": row.get("notes"),
         "created_at": _serialize_datetime(row.get("created_at")),
@@ -520,11 +592,24 @@ def row_to_payout_plan_row_dict(row: Mapping[str, Any]) -> dict[str, Any]:
         "sc_node_id": str(row["sc_node_id"]),
         "sc_node_display_name": row.get("sc_node_display_name"),
         "payout_address": str(row["payout_address"]),
+        "gross_credit_amount": _serialize_numeric(
+            _to_decimal(row.get("gross_credit_amount"))
+        ),
+        "correction_amount": _serialize_numeric(
+            _to_decimal(row.get("correction_amount"))
+        ),
+        "net_payout_amount": _serialize_numeric(_to_decimal(row.get("payout_amount"))),
         "payout_amount": _serialize_numeric(_to_decimal(row.get("payout_amount"))),
         "row_status": row.get("row_status"),
         "created_at": _serialize_datetime(row.get("created_at")),
         "updated_at": _serialize_datetime(row.get("updated_at")),
     }
+
+
+def _optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    return int(value)
 
 
 def _serialize_datetime(value: object) -> str | None:

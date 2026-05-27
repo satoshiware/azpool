@@ -12,6 +12,7 @@ from decimal import Decimal
 import psycopg
 from psycopg.rows import dict_row
 
+from payouts.collector.app import sc_node_payout_correction as payout_correction
 from payouts.collector.app import sc_node_payout_planner as planner
 
 
@@ -35,6 +36,12 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Reserve fraction of trusted balance (default 0.50)",
     )
     common.add_argument("--notes", default=None, help="Optional operator notes")
+    common.add_argument(
+        "--payout-correction-id",
+        type=int,
+        default=None,
+        help="Optional draft payout correction to apply as an audited offset",
+    )
 
     subparsers.add_parser(
         "preview",
@@ -73,8 +80,10 @@ def _load_preview(
     wallet_name: str,
     trusted_balance_snapshot: Decimal,
     reserve_fraction: Decimal,
+    payout_correction_id: int | None = None,
 ) -> planner.PayoutPlanPreview:
     params = {"credit_run_id": credit_run_id}
+    correction_row: dict[str, object] | None = None
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(planner.build_credit_run_for_plan_sql(), params)
         credit_run = cur.fetchone()
@@ -85,6 +94,12 @@ def _load_preview(
         existing_plan_id = (
             int(existing["id"]) if existing is not None else None
         )
+        if payout_correction_id is not None:
+            cur.execute(
+                payout_correction.build_correction_details_sql(payout_correction_id)
+            )
+            row = cur.fetchone()
+            correction_row = dict(row) if row is not None else None
 
         address_lookup: dict[str, list[dict[str, object]]] = {}
         for credit in credits:
@@ -106,6 +121,7 @@ def _load_preview(
         credits=credits,
         address_lookup=address_lookup,
         existing_draft_plan_id=existing_plan_id,
+        correction=correction_row,
     )
 
 
@@ -125,6 +141,7 @@ def _cmd_preview(args: argparse.Namespace) -> int:
             wallet_name=wallet_name,
             trusted_balance_snapshot=trusted_balance,
             reserve_fraction=reserve_fraction,
+            payout_correction_id=args.payout_correction_id,
         )
 
     _emit_json({"mode": "preview", **planner.payout_plan_preview_to_dict(preview)})
@@ -146,6 +163,7 @@ def _cmd_write_draft(args: argparse.Namespace) -> int:
             wallet_name=wallet_name,
             trusted_balance_snapshot=trusted_balance,
             reserve_fraction=reserve_fraction,
+            payout_correction_id=args.payout_correction_id,
         )
         if not preview.plan_allowed:
             print(preview.refusal_reason or "payout plan refused", file=sys.stderr)
@@ -172,6 +190,7 @@ def _cmd_write_draft(args: argparse.Namespace) -> int:
                     "planned_amount_total": preview.planned_amount_total,
                     "row_count": preview.row_count,
                     "notes": args.notes,
+                    "payout_correction_id": preview.payout_correction_id,
                 },
             )
             plan_row = cur.fetchone()
@@ -179,6 +198,19 @@ def _cmd_write_draft(args: argparse.Namespace) -> int:
                 print("failed to insert payout plan", file=sys.stderr)
                 return 1
             payout_plan_id = int(plan_row["id"])
+
+            if preview.payout_correction_id is not None:
+                cur.execute(
+                    payout_correction.build_apply_correction_sql(),
+                    {
+                        "correction_id": preview.payout_correction_id,
+                        "related_payout_plan_id": payout_plan_id,
+                        "status": payout_correction.CORRECTION_STATUS_APPLIED,
+                    },
+                )
+                if cur.fetchone() is None:
+                    print("failed to apply payout correction", file=sys.stderr)
+                    return 1
 
             for row in preview.rows:
                 cur.execute(
@@ -189,6 +221,8 @@ def _cmd_write_draft(args: argparse.Namespace) -> int:
                         "sc_node_id": row.sc_node_id,
                         "sc_node_display_name": row.sc_node_display_name,
                         "payout_address": row.payout_address,
+                        "gross_credit_amount": row.gross_credit_amount,
+                        "correction_amount": row.correction_amount,
                         "payout_amount": row.payout_amount,
                         "row_status": "draft",
                     },

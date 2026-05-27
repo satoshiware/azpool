@@ -151,6 +151,8 @@ See [sc-node-credit-ledger.md](sc-node-credit-ledger.md).
 
 ## 4. Payout plan generation
 
+When gross credits overstate net payable (for example Cycle #3 catch-up minus boundary overpayment offset), create an audited payout correction first and pass `--payout-correction-id` to the planner. See [sc-node-payout-correction-ledger.md](../payouts/docs/sc-node-payout-correction-ledger.md).
+
 - [ ] **Planner preview** (trusted balance snapshot from step 1; default reserve fraction 0.5):
   ```bash
   .venv/bin/python payouts/scripts/sc_node_payout_planner.py preview \

@@ -75,10 +75,14 @@ def test_preview_succeeds_with_sufficient_trusted_balance() -> None:
     )
     assert preview.plan_allowed is True
     assert preview.planned_amount_total == Decimal("121.875")
-    assert preview.max_spendable_amount == Decimal("150")
+    assert preview.gross_planned_amount_total == Decimal("121.875")
+    assert preview.correction_amount_total == Decimal("0")
+    assert preview.payout_correction_id is None
     payload = planner.payout_plan_preview_to_dict(preview)
     assert payload["row_count"] == 1
     assert payload["reserve_percent"] == "50.00"
+    assert payload["correction_amount_total"] == "0"
+    assert preview.max_spendable_amount == Decimal("150")
 
 
 def test_preview_refuses_when_planned_exceeds_max_spendable() -> None:
