@@ -243,6 +243,46 @@ def _cmd_write_draft(args: argparse.Namespace) -> int:
             cur.execute(ledger.build_eligible_mature_rewards_sql(), params)
             reward_rows = cur.fetchall()
 
+            reward_event_ids = [int(row["reward_event_id"]) for row in reward_rows]
+            if reward_event_ids:
+                cur.execute(
+                    ledger.build_existing_reward_event_links_sql(),
+                    {"reward_event_ids": reward_event_ids},
+                )
+                existing_links = cur.fetchall()
+                if existing_links:
+                    credit_run_ids = sorted(
+                        {int(row["credit_run_id"]) for row in existing_links}
+                    )
+                    payout_plans: list[dict[str, Any]] = []
+                    production_executions: list[dict[str, Any]] = []
+                    for credit_run_id in credit_run_ids:
+                        cur.execute(
+                            ledger.build_payout_plans_for_credit_run_sql(),
+                            {"credit_run_id": credit_run_id},
+                        )
+                        payout_plans.extend(cur.fetchall())
+                        cur.execute(
+                            ledger.build_production_executions_for_credit_run_sql(),
+                            {"credit_run_id": credit_run_id},
+                        )
+                        production_executions.extend(cur.fetchall())
+                    duplicate_refusal = ledger.evaluate_write_draft_duplicate_refusal(
+                        existing_links=existing_links,
+                        payout_plans=payout_plans,
+                        production_executions=production_executions,
+                    )
+                    if duplicate_refusal:
+                        print(duplicate_refusal, file=sys.stderr)
+                        payload = {
+                            "mode": "write-draft",
+                            "written": False,
+                            "refusal_reason": duplicate_refusal,
+                            **ledger.credit_run_preview_to_dict(preview),
+                        }
+                        _emit_json(payload)
+                        return 1
+
             cur.execute(
                 ledger.build_insert_credit_run_sql(),
                 {

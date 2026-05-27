@@ -83,6 +83,9 @@ def test_read_only_admin_sql_is_select_only() -> None:
         ledger.build_credit_run_details_sql(1),
         ledger.build_credit_run_credits_sql(1),
         ledger.build_credit_run_events_sql(1),
+        ledger.build_existing_reward_event_links_sql(),
+        ledger.build_payout_plans_for_credit_run_sql(),
+        ledger.build_production_executions_for_credit_run_sql(),
     ):
         assert _MUTATING_SQL.search(sql) is None
 
@@ -227,3 +230,46 @@ def test_script_has_no_wallet_rpc_or_shell_true() -> None:
     assert "subprocess" not in source
     assert "shell=True" not in source
     assert "listtransactions" not in source
+
+
+def test_write_draft_duplicate_refuses_unpaid_existing_draft() -> None:
+    refusal = ledger.evaluate_write_draft_duplicate_refusal(
+        existing_links=[{"reward_event_id": 2282, "credit_run_id": 3}],
+        payout_plans=[],
+        production_executions=[],
+    )
+    assert refusal == (
+        "reward event already linked to credit_run_id=3; "
+        "existing unpaid duplicate draft — manual cleanup required before re-draft"
+    )
+
+
+def test_write_draft_duplicate_refuses_existing_payout_plan() -> None:
+    refusal = ledger.evaluate_write_draft_duplicate_refusal(
+        existing_links=[{"reward_event_id": 2282, "credit_run_id": 3}],
+        payout_plans=[{"id": 2, "credit_run_id": 3, "status": "draft"}],
+        production_executions=[],
+    )
+    assert refusal is not None
+    assert "reward event already linked to credit_run_id=3" in refusal
+    assert "payout plan(s) [2]" in refusal
+
+
+def test_write_draft_duplicate_refuses_existing_production_execution() -> None:
+    refusal = ledger.evaluate_write_draft_duplicate_refusal(
+        existing_links=[{"reward_event_id": 2282, "credit_run_id": 4}],
+        payout_plans=[{"id": 3, "credit_run_id": 4, "status": "approved"}],
+        production_executions=[{"id": 5, "status": "sent", "credit_run_id": 4}],
+    )
+    assert refusal is not None
+    assert "reward event already linked to credit_run_id=4" in refusal
+    assert "production execution(s) [5]" in refusal
+
+
+def test_preview_mode_has_no_write_draft_duplicate_checks() -> None:
+    source = (AZPOOL_ROOT / "payouts/scripts/sc_node_credit_ledger.py").read_text(
+        encoding="utf-8"
+    )
+    preview_block = source.split("def _cmd_preview")[1].split("def _cmd_write_draft")[0]
+    assert "build_existing_reward_event_links_sql" not in preview_block
+    assert "build_insert_credit_run_sql" not in preview_block

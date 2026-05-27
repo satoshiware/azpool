@@ -1,6 +1,8 @@
 [Unit]
 Description=AZCoin SC-node payout scheduler timer (DISABLED — report-only template)
 Requires=azcoin-sc-node-payout-scheduler.service
+# Do not enable until plan/preflight IDs are configured on the service unit.
+# Service exit 2 = safe skip (SuccessExitStatus); exit 3 = HALT — not success.
 
 [Timer]
 # Operator must deliberately enable and configure plan/preflight IDs.

@@ -12,6 +12,11 @@ Environment=PYTHONPATH=/opt/azcoin-super/src/azpool
 EnvironmentFile=-/etc/azcoin-super/pool-ledger/collector.env
 # DISABLED BY DEFAULT: set explicit plan/preflight IDs before enabling timer.
 # Replace placeholder IDs; default mode is report-only (no sends).
+# Exit codes: 0 = success/report emitted; 2 = safe skip / not eligible (not a failure);
+#   3 = HALT / unsafe — do NOT treat as success (not listed in SuccessExitStatus).
+# execute-enabled requires separate operator configuration (approval phrase, idempotency,
+# real plan/preflight IDs) — never enable unattended real sends from this template alone.
+SuccessExitStatus=2
 ExecStart=/opt/azcoin-super/src/azpool/.venv/bin/python payouts/scripts/sc_node_payout_scheduler.py --scheduler-mode report-only --payout-plan-id 0 --production-preflight-id 0 --recommended-execution-mode halt
 StandardOutput=journal
 StandardError=journal

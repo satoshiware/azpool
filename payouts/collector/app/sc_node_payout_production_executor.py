@@ -8,6 +8,7 @@ from typing import Any, Mapping
 from payouts.collector.app import sc_node_payout_plan_review as plan_review
 from payouts.collector.app import sc_node_payout_planner as planner
 from payouts.collector.app import sc_node_payout_production_preflight as production_preflight
+from payouts.collector.app import sc_node_payout_reconciliation as reconciliation
 
 DEFAULT_RESERVE_PERCENT = Decimal("0.500000")
 
@@ -750,6 +751,90 @@ def evaluate_mark_confirmed_refusal(
         return None
     if status != EXECUTION_STATUS_SENT:
         return "production execution status must be sent to confirm"
+    return None
+
+
+_MARK_CONFIRMED_READONLY_RPC_METHOD = "gettransaction"
+
+_FORBIDDEN_MARK_CONFIRMED_RPC_KEYWORDS = re.compile(
+    r"\b("
+    r"sendmany|sendtoaddress|sendrawtransaction|walletpassphrase|"
+    r"createrawtransaction|createwallet|loadwallet|dumpprivkey|"
+    r"signrawtransaction|privkey|listtransactions|getbalances|listunspent"
+    r")\b",
+    re.IGNORECASE,
+)
+
+
+def assert_mark_confirmed_readonly_rpc_argv(argv: list[str]) -> None:
+    joined = " ".join(argv)
+    if _FORBIDDEN_MARK_CONFIRMED_RPC_KEYWORDS.search(joined):
+        raise ValueError(
+            "mark-confirmed argv must not include forbidden wallet RPC keywords"
+        )
+    if _MARK_CONFIRMED_READONLY_RPC_METHOD not in joined.lower():
+        raise ValueError("mark-confirmed argv must invoke gettransaction only")
+
+
+def build_mark_confirmed_gettransaction_argv(
+    *,
+    azc_bin: str,
+    source_wallet_name: str,
+    txid: str,
+) -> list[str]:
+    trimmed_txid = str(txid).strip()
+    if not trimmed_txid:
+        raise ValueError("txid is required")
+    wallet = str(source_wallet_name).strip()
+    if not wallet:
+        raise ValueError("source_wallet_name is required")
+    bin_path = str(azc_bin).strip()
+    if not bin_path:
+        raise ValueError("azc_bin is required")
+    argv = [
+        bin_path,
+        f"-rpcwallet={wallet}",
+        _MARK_CONFIRMED_READONLY_RPC_METHOD,
+        trimmed_txid,
+    ]
+    assert_mark_confirmed_readonly_rpc_argv(argv)
+    return argv
+
+
+def parse_mark_confirmed_confirmations(
+    payload: Mapping[str, Any],
+    txid: str,
+) -> int:
+    evidence = reconciliation.parse_source_gettransaction(payload, txid)
+    return evidence.confirmations
+
+
+def evaluate_mark_confirmed_chain_prereq_refusal(
+    *,
+    execution: Mapping[str, Any],
+    confirm_chain_evidence: bool,
+    source_wallet_name: str | None,
+) -> str | None:
+    if not confirm_chain_evidence:
+        return "mark-confirmed requires --confirm-chain-evidence"
+    if not str(source_wallet_name or "").strip():
+        return "mark-confirmed requires --source-wallet-name for chain evidence check"
+    txid = str(execution.get("txid") or "").strip()
+    if not txid:
+        return "production execution txid is required for chain evidence check"
+    return None
+
+
+def evaluate_mark_confirmed_confirmations_refusal(
+    *,
+    confirmations: int,
+    min_confirmations: int,
+) -> str | None:
+    if confirmations < min_confirmations:
+        return (
+            f"gettransaction confirmations {confirmations} < "
+            f"required {min_confirmations}"
+        )
     return None
 
 

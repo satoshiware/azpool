@@ -18,7 +18,7 @@ Script: `payouts/scripts/sc_node_payout_production_executor.py`
 | `preview` (use first) | No | `getbalances` |
 | `execute-real` | Yes | `getbalances` + `sendtoaddress` |
 | `details` | No | None |
-| `mark-confirmed` | No | None |
+| `mark-confirmed` | No | Read-only `gettransaction` (requires `--confirm-chain-evidence`) |
 
 No daemon, timer, or background job.
 
@@ -50,7 +50,11 @@ PYTHONPATH=. .venv/bin/python payouts/scripts/sc_node_payout_production_executor
   --production-execution-id 1
 
 PYTHONPATH=. .venv/bin/python payouts/scripts/sc_node_payout_production_executor.py mark-confirmed \
-  --production-execution-id 1
+  --production-execution-id 1 \
+  --confirm-chain-evidence \
+  --source-wallet-name wallet \
+  --azc-bin /usr/local/bin/azc-payout-readonly \
+  --min-confirmations 1
 ```
 
 ## Confirmation phrase

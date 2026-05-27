@@ -57,9 +57,29 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
     confirm_parser = subparsers.add_parser(
         "mark-confirmed",
-        help="Mark production execution sent -> confirmed (no wallet RPC)",
+        help="Mark production execution sent -> confirmed (gettransaction guard)",
     )
     confirm_parser.add_argument("--production-execution-id", type=int, required=True)
+    confirm_parser.add_argument(
+        "--confirm-chain-evidence",
+        action="store_true",
+        help="Required: verify tx confirmations via read-only gettransaction",
+    )
+    confirm_parser.add_argument(
+        "--source-wallet-name",
+        help="Source wallet for read-only gettransaction (required with --confirm-chain-evidence)",
+    )
+    confirm_parser.add_argument(
+        "--azc-bin",
+        default=os.environ.get("AZC_BIN", "/usr/local/bin/azc-payout-readonly"),
+        help="Read-only wallet CLI for gettransaction",
+    )
+    confirm_parser.add_argument(
+        "--min-confirmations",
+        type=int,
+        default=1,
+        help="Minimum confirmations required from gettransaction (default 1)",
+    )
 
     details_parser = subparsers.add_parser(
         "details",
@@ -524,6 +544,35 @@ def _cmd_execute_real(args: argparse.Namespace) -> int:
     return 0
 
 
+def _run_gettransaction(
+    *,
+    azc_bin: str,
+    source_wallet_name: str,
+    txid: str,
+) -> dict[str, Any]:
+    argv = executor.build_mark_confirmed_gettransaction_argv(
+        azc_bin=azc_bin,
+        source_wallet_name=source_wallet_name,
+        txid=txid,
+    )
+    completed = subprocess.run(
+        argv,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "gettransaction failed").strip()
+        raise RuntimeError(message)
+    try:
+        parsed = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"invalid JSON from gettransaction: {exc}") from exc
+    if not isinstance(parsed, dict):
+        raise RuntimeError("gettransaction must return a JSON object")
+    return parsed
+
+
 def _cmd_mark_confirmed(args: argparse.Namespace) -> int:
     with psycopg.connect(_database_url()) as conn:
         header, rows_before = _load_execution_details(conn, args.production_execution_id)
@@ -556,6 +605,59 @@ def _cmd_mark_confirmed(args: argparse.Namespace) -> int:
             )
             return 0
 
+        assert header is not None
+        chain_prereq = executor.evaluate_mark_confirmed_chain_prereq_refusal(
+            execution=header,
+            confirm_chain_evidence=args.confirm_chain_evidence,
+            source_wallet_name=args.source_wallet_name,
+        )
+        if chain_prereq:
+            print(chain_prereq, file=sys.stderr)
+            _emit_json(
+                {
+                    "command": "mark-confirmed",
+                    "confirmed": False,
+                    "refusal_reason": chain_prereq,
+                }
+            )
+            return 1
+
+        txid = str(header.get("txid") or "").strip()
+        try:
+            source_payload = _run_gettransaction(
+                azc_bin=args.azc_bin,
+                source_wallet_name=str(args.source_wallet_name),
+                txid=txid,
+            )
+        except RuntimeError as exc:
+            message = str(exc)
+            print(message, file=sys.stderr)
+            _emit_json(
+                {
+                    "command": "mark-confirmed",
+                    "confirmed": False,
+                    "refusal_reason": message,
+                }
+            )
+            return 1
+
+        confirmations = executor.parse_mark_confirmed_confirmations(source_payload, txid)
+        chain_refusal = executor.evaluate_mark_confirmed_confirmations_refusal(
+            confirmations=confirmations,
+            min_confirmations=args.min_confirmations,
+        )
+        if chain_refusal:
+            print(chain_refusal, file=sys.stderr)
+            _emit_json(
+                {
+                    "command": "mark-confirmed",
+                    "confirmed": False,
+                    "refusal_reason": chain_refusal,
+                    "confirmations": confirmations,
+                }
+            )
+            return 1
+
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 executor.build_mark_production_execution_confirmed_sql(),
@@ -577,6 +679,7 @@ def _cmd_mark_confirmed(args: argparse.Namespace) -> int:
                 "command": "mark-confirmed",
                 "confirmed": True,
                 "idempotent_replay": False,
+                "confirmations": confirmations,
                 "production_execution": executor.row_to_production_execution_dict(
                     header
                 ),

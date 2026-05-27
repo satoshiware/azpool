@@ -78,7 +78,9 @@ Refuses if approval phrases are not configured in env. **Not enabled by default.
 
 ## Optional systemd (disabled by default)
 
-See `deploy/systemd/azcoin-sc-node-payout-scheduler.service` and `.timer`. **Do not enable** without separate operator decision. Timer unit defaults to `report-only`.
+See `deploy/systemd/azcoin-sc-node-payout-scheduler.service` and `.timer`. **Do not enable** without separate operator decision. Timer unit defaults to `report-only` with placeholder plan/preflight IDs (`0`).
+
+The shipped oneshot service template includes `SuccessExitStatus=2` so safe skip (exit 2) is not treated as failure by systemd. Exit 3 (HALT / unsafe) is **not** a success — investigate before retry. `execute-enabled` requires separate operator configuration (real IDs, approval phrases); never enable unattended real sends from the template alone.
 
 ## Safety
 

@@ -93,6 +93,15 @@ Refuses when:
 - Missing explicit coverage and no `--allow-default-coverage`
 - No eligible mature rewards in window
 - `mapped_work_total` is zero
+- A selected mature reward event is already linked in `sc_node_reward_credit_run_events` (duplicate draft prevention)
+
+Duplicate draft refusal message format:
+
+```text
+reward event already linked to credit_run_id=<id>
+```
+
+If the existing credit run already has a payout plan or production execution, refusal is **hard** (no auto-delete of the stale draft). When only an unpaid duplicate draft exists, refuse the new write and **manually void or supersede** the stale draft before retrying.
 
 Optional default intersection (use only after operator review):
 

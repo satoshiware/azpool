@@ -286,8 +286,10 @@ See [sc-node-production-payout-chunked-executor.md](../payouts/docs/sc-node-prod
 Only after on-chain confirmations are visible to the operator.
 
 - [ ] `gettransaction` shows `confirmations >= 1` (prefer higher before closing books)
-- [ ] `mark-confirmed --production-execution-id PRODUCTION_EXECUTION_ID`
+- [ ] `mark-confirmed --production-execution-id PRODUCTION_EXECUTION_ID --confirm-chain-evidence --source-wallet-name wallet --azc-bin /usr/local/bin/azc-payout-readonly --min-confirmations 1`
 - [ ] `details` + admin `production-execution-details` — status `confirmed`, `txid` matches `TXID`
+
+`mark-confirmed` **requires** `--confirm-chain-evidence` and refuses when read-only `gettransaction` reports `confirmations` below `--min-confirmations` (default 1). Already-`confirmed` executions remain idempotent without re-checking the chain.
 
 ---
 
