@@ -1,0 +1,12 @@
+[Unit]
+Description=AZCoin SC-node payout scheduler timer (DISABLED — report-only template)
+Requires=azcoin-sc-node-payout-scheduler.service
+
+[Timer]
+# Operator must deliberately enable and configure plan/preflight IDs.
+OnCalendar=
+Persistent=false
+Unit=azcoin-sc-node-payout-scheduler.service
+
+[Install]
+WantedBy=timers.target
