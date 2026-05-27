@@ -44,6 +44,7 @@ Deep links:
 | Receiver evidence export | [sc-node-receiver-evidence-export.md](../payouts/docs/sc-node-receiver-evidence-export.md) |
 | Payout status summary | [sc-node-payout-status-summary.md](../payouts/docs/sc-node-payout-status-summary.md) |
 | Cycle readiness gate | [sc-node-payout-cycle-readiness.md](../payouts/docs/sc-node-payout-cycle-readiness.md) |
+| Manual periodic runner | [sc-node-manual-periodic-payout-runner.md](../payouts/docs/sc-node-manual-periodic-payout-runner.md) |
 | Admin JSON | [pool-ledger-admin.md](pool-ledger-admin.md) |
 
 ## Common environment
@@ -198,9 +199,26 @@ Fresh wallet read; **no sends**. Preflight now includes read-only UTXO inspectio
 - [ ] `record` with idempotency key; record `PRODUCTION_PREFLIGHT_ID`
 - [ ] `details` / admin `production-preflight-details` — `execution_allowed` must be **true**
 
-**Periodic payout note:** CEO guidance is periodic payouts, not immediate per-block sends. Configurable cadence is a future manual-approved runner change — this preflight hardening does not schedule payouts.
+**Periodic payout note:** CEO guidance is periodic payouts, not immediate per-block sends. Use the manual-approved periodic runner (PR Y) for cadence eligibility — it does **not** schedule unattended payouts.
 
 See [sc-node-production-payout-preflight.md](../payouts/docs/sc-node-production-payout-preflight.md).
+
+---
+
+## 6b. Manual-approved periodic runner (optional coordination)
+
+**No unattended automation.** Operator-triggered only.
+
+- [ ] Set cadence interval (default 20 min): `SC_NODE_PAYOUT_CYCLE_INTERVAL_MINUTES` or `--cycle-interval-minutes`
+- [ ] `preview` with `--recommended-execution-mode` from preflight `utxo_chunking_policy`
+- [ ] Confirm `gates.cadence.cadence_eligible=true` or document `--override-cadence-check` + reason
+- [ ] Optional: `--readiness-production-execution-id` for prior cycle must not be `HALT` / `NEEDS_EVIDENCE`
+- [ ] `execute-approved` only after:
+  - `--runner-approval-phrase YES_I_APPROVE_PERIODIC_SC_NODE_PAYOUT`
+  - exact `--executor-confirm-phrase` from delegated executor preview
+  - fresh idempotency key (runner refuses duplicate `sent`/`confirmed`)
+
+See [sc-node-manual-periodic-payout-runner.md](../payouts/docs/sc-node-manual-periodic-payout-runner.md).
 
 ---
 
