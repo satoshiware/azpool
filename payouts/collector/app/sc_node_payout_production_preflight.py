@@ -10,7 +10,26 @@ from payouts.collector.app import sc_node_payout_planner as planner
 
 DEFAULT_RESERVE_PERCENT = Decimal("0.500000")
 DEFAULT_MAX_SPEND_PERCENT = Decimal("0.500000")
+DEFAULT_TARGET_SINGLE_TX_MAX_AMOUNT = Decimal("500")
+DEFAULT_FALLBACK_CHUNK_AMOUNT = Decimal("25")
 WALLET_BALANCE_SOURCE_AZC_GETBALANCES = "azc_getbalances"
+WALLET_UTXO_SOURCE_AZC_LISTUNSPENT = "azc_listunspent"
+WALLET_UTXO_SOURCE_UNAVAILABLE = "unavailable"
+
+FRAGMENTATION_RISK_LOW = "LOW"
+FRAGMENTATION_RISK_MEDIUM = "MEDIUM"
+FRAGMENTATION_RISK_HIGH = "HIGH"
+FRAGMENTATION_RISK_UNKNOWN = "UNKNOWN"
+
+RECOMMENDED_EXECUTION_MODE_SINGLE = "single"
+RECOMMENDED_EXECUTION_MODE_CHUNKED = "chunked"
+RECOMMENDED_EXECUTION_MODE_HALT = "halt"
+
+READONLY_WALLET_RPC_ALLOWLIST = frozenset({"getbalances", "listunspent"})
+
+_LOW_INPUT_COUNT_THRESHOLD = 2
+_MEDIUM_INPUT_COUNT_THRESHOLD = 8
+_HIGH_UTXO_COUNT_THRESHOLD = 50
 
 RESERVE_MODE_PERCENT = "percent"
 RESERVE_MODE_AMOUNT = "amount"
@@ -34,7 +53,18 @@ _WALLET_SEND_KEYWORDS = re.compile(
     r"\b("
     r"sendmany|sendtoaddress|sendrawtransaction|walletpassphrase|"
     r"createrawtransaction|createwallet|loadwallet|dumpprivkey|"
-    r"signrawtransaction|privkey"
+    r"signrawtransaction|importprivkey|importmulti|settxfee|bumpfee|"
+    r"privkey"
+    r")\b",
+    re.IGNORECASE,
+)
+
+_FORBIDDEN_READONLY_WALLET_RPC = re.compile(
+    r"\b("
+    r"sendmany|sendtoaddress|sendrawtransaction|walletpassphrase|"
+    r"createrawtransaction|createwallet|loadwallet|dumpprivkey|"
+    r"signrawtransaction|importprivkey|importmulti|importwallet|"
+    r"settxfee|bumpfee|encryptwallet|backupwallet|dumpwallet|privkey"
     r")\b",
     re.IGNORECASE,
 )
@@ -66,6 +96,35 @@ class ProductionPayoutPreflightRow:
 
 
 @dataclass(frozen=True)
+class UtxoSnapshot:
+    evidence_available: bool
+    utxo_count: int
+    max_observed_utxo_amount: Decimal | None
+    utxo_amounts: tuple[Decimal, ...]
+    wallet_utxo_source: str
+    evidence_unavailable_reason: str | None
+
+
+@dataclass(frozen=True)
+class UtxoChunkingPolicy:
+    spendable_balance: Decimal
+    planned_payout_amount: Decimal
+    reserve_requirement: Decimal
+    available_after_reserve: Decimal
+    utxo_count: int | None
+    max_observed_utxo_amount: Decimal | None
+    target_single_tx_max_amount: Decimal
+    fallback_chunk_amount: Decimal
+    recommended_chunk_size: Decimal
+    estimated_chunk_count: int
+    fragmentation_risk: str
+    recommended_execution_mode: str
+    refusal_reason: str | None
+    wallet_utxo_source: str
+    utxo_evidence_note: str | None
+
+
+@dataclass(frozen=True)
 class ProductionPayoutPreflightPreview:
     payout_plan_id: int
     source_wallet_name: str
@@ -82,11 +141,22 @@ class ProductionPayoutPreflightPreview:
     operator_override: bool
     row_count: int
     rows: tuple[ProductionPayoutPreflightRow, ...]
+    utxo_chunking_policy: UtxoChunkingPolicy
 
 
 def assert_no_wallet_send_keywords(text: str) -> None:
     if _WALLET_SEND_KEYWORDS.search(text):
         raise ValueError("text must not contain wallet send or signing keywords")
+
+
+def assert_allowed_readonly_wallet_rpc(method: str) -> None:
+    normalized = str(method).strip().lower()
+    if not normalized:
+        raise ValueError("wallet RPC method is required")
+    if _FORBIDDEN_READONLY_WALLET_RPC.search(normalized):
+        raise ValueError(f"wallet RPC method is forbidden: {normalized}")
+    if normalized not in READONLY_WALLET_RPC_ALLOWLIST:
+        raise ValueError(f"wallet RPC method is not allowlisted: {normalized}")
 
 
 def _assert_readonly_sql(sql: str) -> None:
@@ -106,6 +176,228 @@ def _assert_production_preflight_insert_sql(sql: str) -> None:
 
 def _quantize_amount(value: Decimal) -> Decimal:
     return value.quantize(Decimal("0.000000000001"), rounding=ROUND_DOWN)
+
+
+def utxo_snapshot_unavailable(reason: str) -> UtxoSnapshot:
+    return UtxoSnapshot(
+        evidence_available=False,
+        utxo_count=0,
+        max_observed_utxo_amount=None,
+        utxo_amounts=(),
+        wallet_utxo_source=WALLET_UTXO_SOURCE_UNAVAILABLE,
+        evidence_unavailable_reason=reason,
+    )
+
+
+def parse_listunspent_payload(payload: Any) -> UtxoSnapshot:
+    if not isinstance(payload, list):
+        raise ValueError("listunspent payload must be a JSON array")
+    amounts: list[Decimal] = []
+    for item in payload:
+        if not isinstance(item, Mapping):
+            continue
+        spendable = item.get("spendable")
+        if spendable is False:
+            continue
+        amount = _quantize_amount(planner._to_decimal(item.get("amount")))
+        if amount <= 0:
+            continue
+        amounts.append(amount)
+    if not amounts:
+        return utxo_snapshot_unavailable("listunspent returned no spendable UTXOs")
+    return UtxoSnapshot(
+        evidence_available=True,
+        utxo_count=len(amounts),
+        max_observed_utxo_amount=max(amounts),
+        utxo_amounts=tuple(sorted(amounts, reverse=True)),
+        wallet_utxo_source=WALLET_UTXO_SOURCE_AZC_LISTUNSPENT,
+        evidence_unavailable_reason=None,
+    )
+
+
+def estimate_input_count_for_amount(
+    amount: Decimal,
+    utxo_amounts: tuple[Decimal, ...],
+) -> int:
+    if amount <= 0:
+        return 0
+    if not utxo_amounts:
+        return 0
+    remaining = _quantize_amount(amount)
+    count = 0
+    for utxo_amount in utxo_amounts:
+        if remaining <= 0:
+            break
+        count += 1
+        remaining = _quantize_amount(remaining - utxo_amount)
+    if remaining > 0:
+        return len(utxo_amounts) + 1
+    return count
+
+
+def assess_fragmentation_risk(
+    *,
+    planned_amount: Decimal,
+    utxo_snapshot: UtxoSnapshot,
+) -> str:
+    if not utxo_snapshot.evidence_available:
+        return FRAGMENTATION_RISK_UNKNOWN
+    if planned_amount <= 0:
+        return FRAGMENTATION_RISK_UNKNOWN
+    if utxo_snapshot.utxo_count <= 0:
+        return FRAGMENTATION_RISK_UNKNOWN
+    estimated_inputs = estimate_input_count_for_amount(
+        planned_amount,
+        utxo_snapshot.utxo_amounts,
+    )
+    max_utxo = utxo_snapshot.max_observed_utxo_amount
+    if estimated_inputs > _MEDIUM_INPUT_COUNT_THRESHOLD:
+        return FRAGMENTATION_RISK_HIGH
+    if max_utxo is not None and planned_amount > max_utxo and estimated_inputs > 1:
+        return FRAGMENTATION_RISK_HIGH
+    if estimated_inputs > _LOW_INPUT_COUNT_THRESHOLD:
+        return FRAGMENTATION_RISK_MEDIUM
+    if (
+        utxo_snapshot.utxo_count > _HIGH_UTXO_COUNT_THRESHOLD
+        and estimated_inputs > 1
+    ):
+        return FRAGMENTATION_RISK_MEDIUM
+    return FRAGMENTATION_RISK_LOW
+
+
+def estimate_total_chunk_count(
+    plan_rows: list[Mapping[str, Any]],
+    chunk_size: Decimal,
+) -> int:
+    from payouts.collector.app import sc_node_payout_production_chunked_executor as chunked_executor
+
+    total = 0
+    for row in plan_rows:
+        amounts = chunked_executor.split_payout_amount_into_chunks(
+            planner._to_decimal(row.get("payout_amount")),
+            chunk_size,
+        )
+        total += len(amounts)
+    return total
+
+
+def build_utxo_chunking_policy(
+    *,
+    wallet_balance: WalletBalance,
+    planned_amount_total: Decimal,
+    reserve_amount: Decimal,
+    spendable_after_reserve: Decimal,
+    plan_rows: list[Mapping[str, Any]],
+    utxo_snapshot: UtxoSnapshot,
+    balance_execution_allowed: bool,
+    balance_refusal_reason: str | None,
+    target_single_tx_max_amount: Decimal = DEFAULT_TARGET_SINGLE_TX_MAX_AMOUNT,
+    fallback_chunk_amount: Decimal = DEFAULT_FALLBACK_CHUNK_AMOUNT,
+) -> UtxoChunkingPolicy:
+    target_single = _quantize_amount(Decimal(str(target_single_tx_max_amount)))
+    fallback_chunk = _quantize_amount(Decimal(str(fallback_chunk_amount)))
+    if fallback_chunk <= 0:
+        raise ValueError("fallback_chunk_amount must be greater than zero")
+    if target_single <= 0:
+        raise ValueError("target_single_tx_max_amount must be greater than zero")
+
+    recommended_chunk_size = fallback_chunk
+    if (
+        utxo_snapshot.evidence_available
+        and utxo_snapshot.max_observed_utxo_amount is not None
+        and utxo_snapshot.max_observed_utxo_amount > 0
+        and utxo_snapshot.max_observed_utxo_amount < fallback_chunk
+    ):
+        recommended_chunk_size = utxo_snapshot.max_observed_utxo_amount
+
+    estimated_chunks = estimate_total_chunk_count(plan_rows, recommended_chunk_size)
+    fragmentation_risk = assess_fragmentation_risk(
+        planned_amount=planned_amount_total,
+        utxo_snapshot=utxo_snapshot,
+    )
+
+    utxo_evidence_note: str | None = None
+    if not utxo_snapshot.evidence_available:
+        reason = utxo_snapshot.evidence_unavailable_reason or "UTXO evidence unavailable"
+        utxo_evidence_note = (
+            f"UTXO evidence is missing ({reason}); "
+            "automation must not assume safe single-send"
+        )
+
+    policy_refusal: str | None = None
+    recommended_mode = RECOMMENDED_EXECUTION_MODE_SINGLE
+
+    if not balance_execution_allowed:
+        recommended_mode = RECOMMENDED_EXECUTION_MODE_HALT
+        policy_refusal = balance_refusal_reason
+    elif planned_amount_total > target_single:
+        recommended_mode = RECOMMENDED_EXECUTION_MODE_CHUNKED
+        policy_refusal = (
+            "planned payout exceeds target_single_tx_max_amount "
+            f"({planner._serialize_numeric(target_single)}); "
+            "single-send is not recommended"
+        )
+    elif fragmentation_risk == FRAGMENTATION_RISK_UNKNOWN:
+        recommended_mode = RECOMMENDED_EXECUTION_MODE_CHUNKED
+    elif fragmentation_risk in {FRAGMENTATION_RISK_MEDIUM, FRAGMENTATION_RISK_HIGH}:
+        recommended_mode = RECOMMENDED_EXECUTION_MODE_CHUNKED
+        if fragmentation_risk == FRAGMENTATION_RISK_HIGH:
+            policy_refusal = (
+                "high UTXO fragmentation risk; single-send may fail with "
+                "transaction too large"
+            )
+    elif planned_amount_total <= target_single:
+        recommended_mode = RECOMMENDED_EXECUTION_MODE_SINGLE
+
+    return UtxoChunkingPolicy(
+        spendable_balance=wallet_balance.trusted,
+        planned_payout_amount=planned_amount_total,
+        reserve_requirement=reserve_amount,
+        available_after_reserve=spendable_after_reserve,
+        utxo_count=utxo_snapshot.utxo_count if utxo_snapshot.evidence_available else None,
+        max_observed_utxo_amount=utxo_snapshot.max_observed_utxo_amount,
+        target_single_tx_max_amount=target_single,
+        fallback_chunk_amount=fallback_chunk,
+        recommended_chunk_size=recommended_chunk_size,
+        estimated_chunk_count=estimated_chunks,
+        fragmentation_risk=fragmentation_risk,
+        recommended_execution_mode=recommended_mode,
+        refusal_reason=policy_refusal,
+        wallet_utxo_source=utxo_snapshot.wallet_utxo_source,
+        utxo_evidence_note=utxo_evidence_note,
+    )
+
+
+def utxo_chunking_policy_to_dict(policy: UtxoChunkingPolicy) -> dict[str, Any]:
+    return {
+        "spendable_balance": planner._serialize_numeric(policy.spendable_balance),
+        "planned_payout_amount": planner._serialize_numeric(policy.planned_payout_amount),
+        "reserve_requirement": planner._serialize_numeric(policy.reserve_requirement),
+        "available_after_reserve": planner._serialize_numeric(policy.available_after_reserve),
+        "utxo_count": policy.utxo_count,
+        "max_observed_utxo_amount": (
+            planner._serialize_numeric(policy.max_observed_utxo_amount)
+            if policy.max_observed_utxo_amount is not None
+            else None
+        ),
+        "target_single_tx_max_amount": planner._serialize_numeric(
+            policy.target_single_tx_max_amount
+        ),
+        "fallback_chunk_amount": planner._serialize_numeric(policy.fallback_chunk_amount),
+        "recommended_chunk_size": planner._serialize_numeric(policy.recommended_chunk_size),
+        "estimated_chunk_count": policy.estimated_chunk_count,
+        "fragmentation_risk": policy.fragmentation_risk,
+        "recommended_execution_mode": policy.recommended_execution_mode,
+        "refusal_reason": policy.refusal_reason,
+        "wallet_utxo_source": policy.wallet_utxo_source,
+        "utxo_evidence_note": policy.utxo_evidence_note,
+        "policy_note": (
+            "fallback_chunk_amount is a safety default for chunked execution, "
+            "not a protocol or business max; up to "
+            f"{planner._serialize_numeric(policy.target_single_tx_max_amount)} AZC "
+            "single-send is allowed only when UTXO/transaction-size policy says safe"
+        ),
+    }
 
 
 def parse_wallet_balance_from_getbalances(payload: Mapping[str, Any]) -> WalletBalance:
@@ -558,6 +850,9 @@ def build_production_preflight_preview(
     reserve_amount: Decimal | None = None,
     max_spend_percent: Decimal = DEFAULT_MAX_SPEND_PERCENT,
     reserve_mode: str = RESERVE_MODE_PERCENT,
+    utxo_snapshot: UtxoSnapshot | None = None,
+    target_single_tx_max_amount: Decimal = DEFAULT_TARGET_SINGLE_TX_MAX_AMOUNT,
+    fallback_chunk_amount: Decimal = DEFAULT_FALLBACK_CHUNK_AMOUNT,
 ) -> ProductionPayoutPreflightPreview:
     planned_amount_total = (
         planner._to_decimal(plan.get("planned_amount_total"))
@@ -611,6 +906,24 @@ def build_production_preflight_preview(
         row_refusals=row_refusals,
     )
 
+    snapshot = (
+        utxo_snapshot
+        if utxo_snapshot is not None
+        else utxo_snapshot_unavailable("listunspent not collected")
+    )
+    utxo_policy = build_utxo_chunking_policy(
+        wallet_balance=wallet_balance,
+        planned_amount_total=planned_amount_total,
+        reserve_amount=reserve_math["reserve_amount"],
+        spendable_after_reserve=reserve_math["spendable_after_reserve"],
+        plan_rows=plan_rows,
+        utxo_snapshot=snapshot,
+        balance_execution_allowed=refusal is None,
+        balance_refusal_reason=refusal,
+        target_single_tx_max_amount=target_single_tx_max_amount,
+        fallback_chunk_amount=fallback_chunk_amount,
+    )
+
     return ProductionPayoutPreflightPreview(
         payout_plan_id=payout_plan_id,
         source_wallet_name=source_wallet_name,
@@ -627,6 +940,7 @@ def build_production_preflight_preview(
         operator_override=operator_override,
         row_count=len(preview_rows),
         rows=tuple(preview_rows),
+        utxo_chunking_policy=utxo_policy,
     )
 
 
@@ -667,6 +981,7 @@ def production_preflight_preview_to_dict(
         "accounting_note": (
             "production preflight audit only; not wallet execution or spend authorization"
         ),
+        "utxo_chunking_policy": utxo_chunking_policy_to_dict(preview.utxo_chunking_policy),
     }
 
 

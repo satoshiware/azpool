@@ -53,6 +53,7 @@ def _plan_row(
     *,
     row_id: int = 10,
     address: str = "az1qxgr54ykergmzp7h7fg37lgtc0ccdce355xppqv",
+    payout_amount: Decimal = Decimal("121.875"),
 ) -> dict[str, object]:
     return {
         "id": row_id,
@@ -60,7 +61,7 @@ def _plan_row(
         "credit_id": 1,
         "sc_node_id": "sc-2",
         "payout_address": address,
-        "payout_amount": Decimal("121.875"),
+        "payout_amount": payout_amount,
         "row_status": plan_review.ROW_STATUS_APPROVED,
     }
 
@@ -107,8 +108,21 @@ def test_planned_amount_within_spendable_after_reserve_allows() -> None:
         address_lookup=_address_lookup(),
         reserve_percent=reserve["reserve_percent"],
         max_spend_percent=reserve["max_spend_percent"],
+        utxo_snapshot=production.UtxoSnapshot(
+            evidence_available=True,
+            utxo_count=1,
+            max_observed_utxo_amount=Decimal("660"),
+            utxo_amounts=(Decimal("660"),),
+            wallet_utxo_source=production.WALLET_UTXO_SOURCE_AZC_LISTUNSPENT,
+            evidence_unavailable_reason=None,
+        ),
     )
     assert preview.execution_allowed is True
+    assert preview.utxo_chunking_policy.fragmentation_risk == production.FRAGMENTATION_RISK_LOW
+    assert (
+        preview.utxo_chunking_policy.recommended_execution_mode
+        == production.RECOMMENDED_EXECUTION_MODE_SINGLE
+    )
 
 
 def test_planned_amount_above_spendable_after_reserve_refuses() -> None:
@@ -276,6 +290,133 @@ def test_script_getbalances_argv_is_explicit_list_without_shell() -> None:
     assert isinstance(argv, list)
 
 
+def test_script_listunspent_argv_is_explicit_list_without_shell() -> None:
+    from payouts.scripts import sc_node_payout_production_preflight as cli
+
+    argv = cli._listunspent_argv(azc_bin="/tmp/azc", source_wallet_name="wallet")
+    assert argv == ["/tmp/azc", "-rpcwallet=wallet", "listunspent", "1"]
+    assert isinstance(argv, list)
+
+
+def test_assert_allowed_readonly_wallet_rpc_rejects_send_methods() -> None:
+    with pytest.raises(ValueError, match="forbidden"):
+        production.assert_allowed_readonly_wallet_rpc("sendtoaddress")
+    with pytest.raises(ValueError, match="not allowlisted"):
+        production.assert_allowed_readonly_wallet_rpc("gettransaction")
+    production.assert_allowed_readonly_wallet_rpc("getbalances")
+    production.assert_allowed_readonly_wallet_rpc("listunspent")
+
+
+def _fragmented_utxo_snapshot(*, chunk_size: str = "25") -> production.UtxoSnapshot:
+    amounts = tuple(Decimal(chunk_size) for _ in range(40))
+    return production.UtxoSnapshot(
+        evidence_available=True,
+        utxo_count=len(amounts),
+        max_observed_utxo_amount=Decimal(chunk_size),
+        utxo_amounts=amounts,
+        wallet_utxo_source=production.WALLET_UTXO_SOURCE_AZC_LISTUNSPENT,
+        evidence_unavailable_reason=None,
+    )
+
+
+def test_cycle2_fragmented_wallet_recommends_chunked_not_single() -> None:
+    trusted = Decimal("660")
+    reserve = production.calculate_reserve(trusted)
+    preview = production.build_production_preflight_preview(
+        payout_plan_id=2,
+        source_wallet_name="wallet",
+        plan=_approved_plan(planned="223.125"),
+        plan_rows=[_plan_row(payout_amount=Decimal("223.125"))],
+        wallet_balance=production.WalletBalance(trusted=trusted, immature=Decimal("0")),
+        address_lookup=_address_lookup(),
+        reserve_percent=reserve["reserve_percent"],
+        max_spend_percent=reserve["max_spend_percent"],
+        utxo_snapshot=_fragmented_utxo_snapshot(),
+    )
+    assert preview.execution_allowed is True
+    policy = preview.utxo_chunking_policy
+    assert policy.fragmentation_risk == production.FRAGMENTATION_RISK_HIGH
+    assert policy.recommended_execution_mode == production.RECOMMENDED_EXECUTION_MODE_CHUNKED
+    assert policy.estimated_chunk_count == 9
+    assert policy.recommended_chunk_size == Decimal("25.000000000000")
+    assert policy.refusal_reason is not None
+    assert "fragmentation" in policy.refusal_reason
+
+
+def test_missing_utxo_evidence_reports_unknown_and_recommends_chunked() -> None:
+    trusted = Decimal("660")
+    reserve = production.calculate_reserve(trusted)
+    preview = production.build_production_preflight_preview(
+        payout_plan_id=_PLAN_ID,
+        source_wallet_name="wallet",
+        plan=_approved_plan(planned="121.875"),
+        plan_rows=[_plan_row()],
+        wallet_balance=production.WalletBalance(trusted=trusted, immature=Decimal("0")),
+        address_lookup=_address_lookup(),
+        reserve_percent=reserve["reserve_percent"],
+        max_spend_percent=reserve["max_spend_percent"],
+        utxo_snapshot=production.utxo_snapshot_unavailable("listunspent failed"),
+    )
+    policy = preview.utxo_chunking_policy
+    assert policy.fragmentation_risk == production.FRAGMENTATION_RISK_UNKNOWN
+    assert policy.recommended_execution_mode == production.RECOMMENDED_EXECUTION_MODE_CHUNKED
+    assert policy.utxo_evidence_note is not None
+    assert "UTXO evidence is missing" in policy.utxo_evidence_note
+
+
+def test_balance_failure_recommends_halt_in_utxo_policy() -> None:
+    trusted = Decimal("660")
+    reserve = production.calculate_reserve(trusted)
+    preview = production.build_production_preflight_preview(
+        payout_plan_id=_PLAN_ID,
+        source_wallet_name="wallet",
+        plan=_approved_plan(planned="400"),
+        plan_rows=[_plan_row()],
+        wallet_balance=production.WalletBalance(trusted=trusted, immature=Decimal("0")),
+        address_lookup=_address_lookup(),
+        reserve_percent=reserve["reserve_percent"],
+        max_spend_percent=reserve["max_spend_percent"],
+        utxo_snapshot=_fragmented_utxo_snapshot(),
+    )
+    assert preview.execution_allowed is False
+    assert (
+        preview.utxo_chunking_policy.recommended_execution_mode
+        == production.RECOMMENDED_EXECUTION_MODE_HALT
+    )
+
+
+def test_parse_listunspent_payload_filters_non_spendable_and_zero_amounts() -> None:
+    snapshot = production.parse_listunspent_payload(
+        [
+            {"amount": 25.0, "spendable": True},
+            {"amount": 0.0, "spendable": True},
+            {"amount": 10.0, "spendable": False},
+        ]
+    )
+    assert snapshot.evidence_available is True
+    assert snapshot.utxo_count == 1
+    assert snapshot.max_observed_utxo_amount == Decimal("25.000000000000")
+
+
+def test_preview_dict_includes_utxo_chunking_policy_fields() -> None:
+    trusted = Decimal("660")
+    preview = production.build_production_preflight_preview(
+        payout_plan_id=_PLAN_ID,
+        source_wallet_name="wallet",
+        plan=_approved_plan(),
+        plan_rows=[_plan_row()],
+        wallet_balance=production.WalletBalance(trusted=trusted, immature=Decimal("0")),
+        address_lookup=_address_lookup(),
+        utxo_snapshot=_fragmented_utxo_snapshot(),
+    )
+    payload = production.production_preflight_preview_to_dict(preview)
+    policy = payload["utxo_chunking_policy"]
+    assert policy["target_single_tx_max_amount"] == "500.000000000000"
+    assert policy["fallback_chunk_amount"] == "25.000000000000"
+    assert policy["recommended_execution_mode"] == production.RECOMMENDED_EXECUTION_MODE_CHUNKED
+    assert "fallback_chunk_amount is a safety default" in policy["policy_note"]
+
+
 def test_script_subprocess_run_does_not_use_shell_true() -> None:
     source = (
         AZPOOL_ROOT / "payouts/scripts/sc_node_payout_production_preflight.py"
@@ -283,11 +424,12 @@ def test_script_subprocess_run_does_not_use_shell_true() -> None:
     assert "shell=True" not in source
     assert "subprocess.run" in source
     assert "getbalances" in source
+    assert "listunspent" in source
 
 
 def test_implementation_files_have_no_wallet_send_keywords() -> None:
-    guard_block = re.compile(
-        r"_WALLET_SEND_KEYWORDS = re\.compile\([\s\S]*?\)\n",
+    guard_blocks = re.compile(
+        r"_(?:WALLET_SEND_KEYWORDS|FORBIDDEN_READONLY_WALLET_RPC) = re\.compile\([\s\S]*?\)\n",
         re.MULTILINE,
     )
     for rel in (
@@ -295,7 +437,7 @@ def test_implementation_files_have_no_wallet_send_keywords() -> None:
         "payouts/scripts/sc_node_payout_production_preflight.py",
     ):
         text = (AZPOOL_ROOT / rel).read_text(encoding="utf-8")
-        scrubbed = guard_block.sub("", text, count=1)
+        scrubbed = guard_blocks.sub("", text)
         assert _WALLET_SEND_KEYWORDS.search(scrubbed) is None
 
 
