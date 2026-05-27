@@ -153,13 +153,50 @@ FROM support_wallet_reward_events
 WHERE wallet_name = %(wallet_name)s
   AND maturity_status = 'mature'
   AND event_time IS NOT NULL
-  AND event_time >= %(coverage_start)s
-  AND event_time <= %(coverage_end)s
+  AND event_time < %(coverage_end)s
+  AND (
+    (
+      %(exclude_coverage_start_boundary)s IS FALSE
+      AND event_time >= %(coverage_start)s
+    )
+    OR (
+      %(exclude_coverage_start_boundary)s IS TRUE
+      AND event_time > %(coverage_start)s
+    )
+  )
 ORDER BY event_time, id
 """.strip()
     _assert_readonly_sql(sql)
     assert "maturity_status = 'mature'" in sql
+    assert "event_time < %(coverage_end)s" in sql
     return sql
+
+
+def build_prior_credit_run_coverage_end_match_sql() -> str:
+    sql = """
+SELECT EXISTS (
+  SELECT 1
+  FROM sc_node_reward_credit_runs r
+  WHERE r.wallet_name = %(wallet_name)s
+    AND r.coverage_end = %(coverage_start)s
+) AS exclude_coverage_start_boundary
+""".strip()
+    _assert_readonly_sql(sql)
+    return sql
+
+
+def reward_event_time_in_coverage(
+    event_time: datetime,
+    *,
+    coverage_start: datetime,
+    coverage_end: datetime,
+    exclude_coverage_start_boundary: bool = False,
+) -> bool:
+    if event_time >= coverage_end:
+        return False
+    if exclude_coverage_start_boundary:
+        return event_time > coverage_start
+    return event_time >= coverage_start
 
 
 def build_sc_node_work_share_sql() -> str:

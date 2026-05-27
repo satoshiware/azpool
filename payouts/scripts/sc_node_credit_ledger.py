@@ -152,13 +152,38 @@ def _resolve_coverage(
     return default
 
 
+def _reward_selection_params(
+    conn: psycopg.Connection,
+    *,
+    wallet_name: str,
+    coverage: ledger.CreditCoverage,
+) -> dict[str, object]:
+    params: dict[str, object] = {
+        "wallet_name": wallet_name,
+        **_coverage_params(coverage),
+    }
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            ledger.build_prior_credit_run_coverage_end_match_sql(),
+            {
+                "wallet_name": wallet_name,
+                "coverage_start": coverage.coverage_start,
+            },
+        )
+        row = cur.fetchone() or {}
+        params["exclude_coverage_start_boundary"] = bool(
+            row.get("exclude_coverage_start_boundary")
+        )
+    return params
+
+
 def _load_preview(
     conn: psycopg.Connection,
     *,
     wallet_name: str,
     coverage: ledger.CreditCoverage,
 ) -> ledger.CreditRunPreview:
-    params = {"wallet_name": wallet_name, **_coverage_params(coverage)}
+    params = _reward_selection_params(conn, wallet_name=wallet_name, coverage=coverage)
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute(ledger.build_eligible_mature_rewards_sql(), params)
         reward_rows = cur.fetchall()
@@ -191,11 +216,18 @@ def _cmd_preview(args: argparse.Namespace) -> int:
             coverage_end_arg=args.coverage_end,
         )
         preview = _load_preview(conn, wallet_name=wallet_name, coverage=coverage)
+        selection_params = _reward_selection_params(
+            conn, wallet_name=wallet_name, coverage=coverage
+        )
     payload = {
         "mode": "preview",
         "accounting_note": (
             "support_wallet_reward_events is gross reward-event history, not wallet balance"
         ),
+        "coverage_interval": "[coverage_start, coverage_end)",
+        "exclude_coverage_start_boundary": selection_params[
+            "exclude_coverage_start_boundary"
+        ],
         **ledger.credit_run_preview_to_dict(preview),
     }
     _emit_json(payload)
@@ -238,7 +270,9 @@ def _cmd_write_draft(args: argparse.Namespace) -> int:
             _emit_json(payload)
             return 1
 
-        params = {"wallet_name": wallet_name, **_coverage_params(coverage)}
+        params = _reward_selection_params(
+            conn, wallet_name=wallet_name, coverage=coverage
+        )
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(ledger.build_eligible_mature_rewards_sql(), params)
             reward_rows = cur.fetchall()

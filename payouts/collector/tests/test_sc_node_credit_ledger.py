@@ -50,6 +50,73 @@ def test_eligible_rewards_filter_mature_only() -> None:
     assert "orphaned" not in sql
 
 
+def test_eligible_rewards_sql_uses_half_open_coverage_interval() -> None:
+    sql = ledger.build_eligible_mature_rewards_sql()
+    assert "event_time < %(coverage_end)s" in sql
+    assert "event_time <= %(coverage_end)s" not in sql
+    assert "exclude_coverage_start_boundary" in sql
+
+
+def test_prior_credit_run_coverage_end_match_sql_is_select_only() -> None:
+    sql = ledger.build_prior_credit_run_coverage_end_match_sql()
+    assert _MUTATING_SQL.search(sql) is None
+    assert "exclude_coverage_start_boundary" in sql
+
+
+def test_reward_event_at_coverage_start_included_for_first_cycle() -> None:
+    coverage_start = datetime(2026, 5, 21, 21, 41, 42, 359511, tzinfo=timezone.utc)
+    event_time = datetime(2026, 5, 21, 21, 41, 42, 359511, tzinfo=timezone.utc)
+    coverage_end = datetime(2026, 5, 26, 15, 13, 32, tzinfo=timezone.utc)
+    assert ledger.reward_event_time_in_coverage(
+        event_time,
+        coverage_start=coverage_start,
+        coverage_end=coverage_end,
+        exclude_coverage_start_boundary=False,
+    )
+
+
+def test_reward_event_at_coverage_end_is_excluded() -> None:
+    coverage_start = datetime(2026, 5, 21, 21, 41, 42, 359511, tzinfo=timezone.utc)
+    coverage_end = datetime(2026, 5, 26, 15, 13, 32, tzinfo=timezone.utc)
+    event_time = coverage_end
+    assert not ledger.reward_event_time_in_coverage(
+        event_time,
+        coverage_start=coverage_start,
+        coverage_end=coverage_end,
+        exclude_coverage_start_boundary=False,
+    )
+
+
+def test_adjacent_cycle_excludes_boundary_event_at_shared_timestamp() -> None:
+    boundary = datetime(2026, 5, 26, 15, 13, 32, tzinfo=timezone.utc)
+    cycle3_end = datetime(2026, 5, 27, 21, 58, 42, tzinfo=timezone.utc)
+    assert not ledger.reward_event_time_in_coverage(
+        boundary,
+        coverage_start=boundary,
+        coverage_end=cycle3_end,
+        exclude_coverage_start_boundary=True,
+    )
+
+
+def test_cycle2_cycle3_boundary_regression_reward_event_2282() -> None:
+    boundary = datetime(2026, 5, 26, 15, 13, 32, tzinfo=timezone.utc)
+    cycle2_start = datetime(2026, 5, 21, 21, 41, 42, 359511, tzinfo=timezone.utc)
+    cycle3_end = datetime(2026, 5, 27, 21, 58, 42, tzinfo=timezone.utc)
+
+    assert ledger.reward_event_time_in_coverage(
+        boundary,
+        coverage_start=cycle2_start,
+        coverage_end=boundary,
+        exclude_coverage_start_boundary=False,
+    ) is False
+    assert ledger.reward_event_time_in_coverage(
+        boundary,
+        coverage_start=boundary,
+        coverage_end=cycle3_end,
+        exclude_coverage_start_boundary=True,
+    ) is False
+
+
 def test_unmapped_work_sql_filters_null_sc_node_id() -> None:
     sql = ledger.build_unmapped_work_sql()
     assert "sc_node_id IS NULL" in sql
@@ -86,6 +153,7 @@ def test_read_only_admin_sql_is_select_only() -> None:
         ledger.build_existing_reward_event_links_sql(),
         ledger.build_payout_plans_for_credit_run_sql(),
         ledger.build_production_executions_for_credit_run_sql(),
+        ledger.build_prior_credit_run_coverage_end_match_sql(),
     ):
         assert _MUTATING_SQL.search(sql) is None
 

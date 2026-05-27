@@ -16,6 +16,32 @@ The support wallet may contain **historical mature rewards** while **current tru
 
 Before `write-draft`, confirm the selected `coverage_start` / `coverage_end` window contains only rewards you intend to treat as still payable. PR I does not call `azc` and does not inspect wallet balances.
 
+## Coverage interval (half-open)
+
+Reward-event selection uses a **half-open** window:
+
+```text
+[coverage_start, coverage_end)
+```
+
+Meaning: `coverage_start <= event_time < coverage_end`.
+
+- An event exactly at `coverage_start` is included for a **first** cycle start.
+- An event exactly at `coverage_end` is **excluded** (`coverage_end` is exclusive).
+- The next cycle may safely set `coverage_start` to the previous cycle's `coverage_end` because that timestamp is not re-selected.
+- When `coverage_start` equals a prior credit run's stored `coverage_end`, events at exactly that timestamp are excluded (adjacent-cycle boundary guard).
+
+Preview JSON includes `coverage_interval` and `exclude_coverage_start_boundary` when relevant.
+
+### Observed Cycle #3 overpayment (do not repeat)
+
+`reward_event_id=2282` (`event_time=2026-05-26T15:13:32+00:00`, amount 1.875 AZC) was credited in:
+
+- **Cycle #2** (`credit_run_id=2`) with inclusive end `coverage_end=2026-05-26T15:13:32+00:00`
+- **Cycle #3** again (`credit_run_id=3` duplicate draft and `credit_run_id=4` paid) with inclusive start `coverage_start=2026-05-26T15:13:32+00:00`
+
+That boundary double-count predates this hardening. **Do not repeat manually.** Treat the 1.875 AZC as an accounting correction/overpayment to address before or during the next payout cycle.
+
 ## Operator reserve (not enforced in PR I)
 
 Operators may keep **at least 50%** of current trusted wallet balance reserved for manual testing and future automated-transfer testing.
