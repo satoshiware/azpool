@@ -67,10 +67,11 @@ Complete **before** any wallet or write operation.
 - [ ] **Git / tests:** `main` (or release branch) is current; `pytest payouts/collector/tests` is green on the support node checkout.
 - [ ] **Wallet wrappers exist:**
   - `/usr/local/bin/azc-payout` (guarded send path — production `execute-real` only)
-  - `/usr/local/bin/azc-payout-readonly` (read-only RPC: `getbalances`, `gettransaction`, etc.)
+  - `/usr/local/bin/azc-payout-readonly` (read-only RPC: `getbalances`, `gettransaction`, `listtransactions`, `listunspent`)
 - [ ] **Sudoers guards:** Non-interactive checks succeed (no unknown password prompt). Example:
   ```bash
   sudo -n /usr/local/bin/azc-payout-readonly -rpcwallet=wallet getbalances
+  sudo -n /usr/local/bin/azc-payout-readonly -rpcwallet=wallet listunspent 1
   ```
   If sudo asks for a password or denies the command, **stop** — fix sudoers/wrappers before continuing.
 - [ ] **Support wallet balance snapshot:** Record trusted and immature from read-only `getbalances` (via `azc-payout-readonly`). Compare to operator reserve policy (default **50%** of trusted retained; see credit-ledger runbook).
@@ -183,13 +184,21 @@ See [sc-node-payout-test-executor.md](../payouts/docs/sc-node-payout-test-execut
 
 ## 6. Production preflight
 
-Fresh wallet read; **no sends**.
+Fresh wallet read; **no sends**. Preflight now includes read-only UTXO inspection (`listunspent`) and a **UTXO/chunking policy** block in preview JSON.
 
 - [ ] `preview` with `--source-wallet-name wallet` and `--azc-bin /usr/local/bin/azc-payout-readonly`
 - [ ] Confirm **50% reserve** math: `planned_amount_total` ≤ `spendable_after_reserve` (unless explicit `--override-reserve` with documented reason)
 - [ ] Confirm payout addresses match registry (no drift)
+- [ ] Review `utxo_chunking_policy` in preview output:
+  - [ ] `fragmentation_risk` is not assumed `LOW` without UTXO evidence
+  - [ ] `recommended_execution_mode` is **`single`** only when risk is `LOW` and amount ≤ 500 AZC
+  - [ ] If **`chunked`**, note `recommended_chunk_size` and `estimated_chunk_count` for section 7b
+  - [ ] If **`halt`**, resolve balance/reserve/address issues before any send
+- [ ] **Do not use single-send** when policy recommends chunked (Cycle #2: 223.125 AZC / fragmented UTXOs → chunked)
 - [ ] `record` with idempotency key; record `PRODUCTION_PREFLIGHT_ID`
 - [ ] `details` / admin `production-preflight-details` — `execution_allowed` must be **true**
+
+**Periodic payout note:** CEO guidance is periodic payouts, not immediate per-block sends. Configurable cadence is a future manual-approved runner change — this preflight hardening does not schedule payouts.
 
 See [sc-node-production-payout-preflight.md](../payouts/docs/sc-node-production-payout-preflight.md).
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Production SC-node payout preflight (read-only getbalances; no sends)."""
+"""Production SC-node payout preflight (read-only getbalances/listunspent; no sends)."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from payouts.collector.app.sc_node_payout_planner import (
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Production payout preflight (getbalances only; no sends)"
+        description="Production payout preflight (getbalances/listunspent only; no sends)"
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -55,6 +55,21 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--override-reserve",
         action="store_true",
         help="Allow spend above default reserve (still capped at trusted balance)",
+    )
+    common.add_argument(
+        "--skip-utxo-inspection",
+        action="store_true",
+        help="Skip read-only listunspent (UTXO policy will report UNKNOWN risk)",
+    )
+    common.add_argument(
+        "--target-single-tx-max-amount",
+        default=str(production.DEFAULT_TARGET_SINGLE_TX_MAX_AMOUNT),
+        help="Max AZC for single-send when UTXO policy says safe (default 500)",
+    )
+    common.add_argument(
+        "--fallback-chunk-amount",
+        default=str(production.DEFAULT_FALLBACK_CHUNK_AMOUNT),
+        help="Fallback chunked send size when fragmentation risk is elevated (default 25)",
     )
     common.add_argument("--notes", default=None)
 
@@ -119,7 +134,46 @@ def _reserve_options(args: argparse.Namespace) -> dict[str, object]:
     }
 
 
+def _listunspent_argv(*, azc_bin: str, source_wallet_name: str) -> list[str]:
+    production.assert_allowed_readonly_wallet_rpc("listunspent")
+    production.assert_no_wallet_send_keywords(azc_bin)
+    argv = [
+        azc_bin,
+        f"-rpcwallet={source_wallet_name}",
+        "listunspent",
+        "1",
+    ]
+    for arg in argv:
+        production.assert_no_wallet_send_keywords(arg)
+    return argv
+
+
+def _run_listunspent(*, azc_bin: str, source_wallet_name: str) -> production.UtxoSnapshot:
+    argv = _listunspent_argv(azc_bin=azc_bin, source_wallet_name=source_wallet_name)
+    completed = subprocess.run(
+        argv,
+        check=False,
+        capture_output=True,
+        text=True,
+        shell=False,
+    )
+    if completed.returncode != 0:
+        message = (completed.stderr or completed.stdout or "listunspent failed").strip()
+        return production.utxo_snapshot_unavailable(message)
+    try:
+        parsed = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        return production.utxo_snapshot_unavailable(f"invalid JSON from listunspent: {exc}")
+    if not isinstance(parsed, list):
+        return production.utxo_snapshot_unavailable("listunspent must return a JSON array")
+    try:
+        return production.parse_listunspent_payload(parsed)
+    except ValueError as exc:
+        return production.utxo_snapshot_unavailable(str(exc))
+
+
 def _getbalances_argv(*, azc_bin: str, source_wallet_name: str) -> list[str]:
+    production.assert_allowed_readonly_wallet_rpc("getbalances")
     production.assert_no_wallet_send_keywords(azc_bin)
     argv = [
         azc_bin,
@@ -178,6 +232,25 @@ def _load_plan_bundle(
     return plan, plan_rows, _address_lookup(conn)
 
 
+def _utxo_policy_options(args: argparse.Namespace) -> dict[str, Decimal]:
+    return {
+        "target_single_tx_max_amount": parse_decimal_amount(
+            args.target_single_tx_max_amount,
+            field_name="target_single_tx_max_amount",
+        ),
+        "fallback_chunk_amount": parse_decimal_amount(
+            args.fallback_chunk_amount,
+            field_name="fallback_chunk_amount",
+        ),
+    }
+
+
+def _collect_utxo_snapshot(args: argparse.Namespace, *, source_wallet: str) -> production.UtxoSnapshot:
+    if args.skip_utxo_inspection:
+        return production.utxo_snapshot_unavailable("listunspent skipped by operator flag")
+    return _run_listunspent(azc_bin=args.azc_bin, source_wallet_name=source_wallet)
+
+
 def _build_preview_from_args(
     args: argparse.Namespace,
     *,
@@ -185,8 +258,10 @@ def _build_preview_from_args(
     plan_rows: list[dict[str, object]],
     wallet_balance: production.WalletBalance,
     address_lookup: dict[str, list[dict[str, object]]],
+    utxo_snapshot: production.UtxoSnapshot,
 ) -> production.ProductionPayoutPreflightPreview:
     opts = _reserve_options(args)
+    utxo_opts = _utxo_policy_options(args)
     return production.build_production_preflight_preview(
         payout_plan_id=args.payout_plan_id,
         source_wallet_name=production.normalize_source_wallet_name(args.source_wallet_name),
@@ -199,6 +274,9 @@ def _build_preview_from_args(
         reserve_amount=opts["reserve_amount"],  # type: ignore[arg-type]
         max_spend_percent=opts["max_spend_percent"],  # type: ignore[arg-type]
         reserve_mode=str(opts["reserve_mode"]),
+        utxo_snapshot=utxo_snapshot,
+        target_single_tx_max_amount=utxo_opts["target_single_tx_max_amount"],
+        fallback_chunk_amount=utxo_opts["fallback_chunk_amount"],
     )
 
 
@@ -209,6 +287,7 @@ def _cmd_preview(args: argparse.Namespace) -> int:
         source_wallet_name=source_wallet,
     )
     wallet_balance = production.parse_wallet_balance_from_getbalances(balance_payload)
+    utxo_snapshot = _collect_utxo_snapshot(args, source_wallet=source_wallet)
 
     with psycopg.connect(_database_url()) as conn:
         conn.set_read_only(True)
@@ -219,6 +298,7 @@ def _cmd_preview(args: argparse.Namespace) -> int:
             plan_rows=plan_rows,
             wallet_balance=wallet_balance,
             address_lookup=address_lookup,
+            utxo_snapshot=utxo_snapshot,
         )
 
     _emit_json(
@@ -254,6 +334,7 @@ def _cmd_record(args: argparse.Namespace) -> int:
         source_wallet_name=source_wallet,
     )
     wallet_balance = production.parse_wallet_balance_from_getbalances(balance_payload)
+    utxo_snapshot = _collect_utxo_snapshot(args, source_wallet=source_wallet)
     opts = _reserve_options(args)
 
     with psycopg.connect(_database_url()) as conn:
@@ -290,6 +371,7 @@ def _cmd_record(args: argparse.Namespace) -> int:
             plan_rows=plan_rows,
             wallet_balance=wallet_balance,
             address_lookup=address_lookup,
+            utxo_snapshot=utxo_snapshot,
         )
         preflight_status = (
             production.PREFLIGHT_STATUS_PASSED
