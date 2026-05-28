@@ -20,12 +20,20 @@ SCHEDULER_MODES = frozenset({MODE_REPORT_ONLY, MODE_DRY_RUN_DELEGATE, MODE_EXECU
 
 ENABLE_REAL_EXECUTION_TOKEN = "YES_ENABLE_UNATTENDED_PAYOUT_EXECUTION"
 
+ENV_SCHEDULER_MODE = "SC_NODE_PAYOUT_SCHEDULER_MODE"
+ENV_PAYOUT_PLAN_ID = "SC_NODE_PAYOUT_SCHEDULER_PAYOUT_PLAN_ID"
+ENV_PRODUCTION_PREFLIGHT_ID = "SC_NODE_PAYOUT_SCHEDULER_PRODUCTION_PREFLIGHT_ID"
+ENV_RECOMMENDED_EXECUTION_MODE = "SC_NODE_PAYOUT_SCHEDULER_RECOMMENDED_EXECUTION_MODE"
+ENV_ON_CALENDAR = "SC_NODE_PAYOUT_SCHEDULER_ON_CALENDAR"
 ENV_RUNNER_APPROVAL_PHRASE = "SC_NODE_PAYOUT_SCHEDULER_RUNNER_APPROVAL_PHRASE"
 ENV_EXECUTOR_CONFIRM_PHRASE = "SC_NODE_PAYOUT_SCHEDULER_EXECUTOR_CONFIRM_PHRASE"
 ENV_IDEMPOTENCY_KEY = "SC_NODE_PAYOUT_SCHEDULER_IDEMPOTENCY_KEY"
 ENV_SOURCE_WALLET_NAME = "SC_NODE_PAYOUT_SCHEDULER_SOURCE_WALLET_NAME"
 ENV_AZC_BIN = "SC_NODE_PAYOUT_SCHEDULER_AZC_BIN"
 ENV_CHUNK_AMOUNT = "SC_NODE_PAYOUT_SCHEDULER_CHUNK_AMOUNT"
+
+SAFE_SKIP_PREFIX = "SAFE_SKIP"
+RECOMMENDED_EXECUTION_MODES = frozenset({"single", "chunked", "halt"})
 
 EXIT_SUCCESS = 0
 EXIT_USAGE_ERROR = 1
@@ -43,6 +51,15 @@ _FORBIDDEN_SCHEDULER_WALLET_KEYWORDS = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+
+
+@dataclass(frozen=True)
+class SchedulerTargetConfig:
+    payout_plan_id: int | None
+    production_preflight_id: int | None
+    recommended_execution_mode: str | None
+    explicit_target_configured: bool
+    config_error: str | None
 
 
 @dataclass(frozen=True)
@@ -90,6 +107,115 @@ def normalize_scheduler_mode(value: str) -> str:
 
 def verify_enable_real_execution_flag(value: str | None) -> bool:
     return str(value or "").strip() == ENABLE_REAL_EXECUTION_TOKEN
+
+
+def _parse_optional_positive_int(value: str | int | None) -> int | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        parsed = int(text)
+    except ValueError:
+        return None
+    if parsed <= 0:
+        return None
+    return parsed
+
+
+def _parse_optional_recommended_execution_mode(value: str | None) -> str | None:
+    if value is None:
+        return None
+    mode = str(value).strip().lower()
+    if not mode:
+        return None
+    if mode not in RECOMMENDED_EXECUTION_MODES:
+        return None
+    return mode
+
+
+def resolve_scheduler_target(
+    *,
+    payout_plan_id: int | None = None,
+    production_preflight_id: int | None = None,
+    recommended_execution_mode: str | None = None,
+) -> SchedulerTargetConfig:
+    plan_raw = (
+        payout_plan_id
+        if payout_plan_id is not None
+        else os.environ.get(ENV_PAYOUT_PLAN_ID, "").strip() or None
+    )
+    preflight_raw = (
+        production_preflight_id
+        if production_preflight_id is not None
+        else os.environ.get(ENV_PRODUCTION_PREFLIGHT_ID, "").strip() or None
+    )
+    mode_raw = (
+        recommended_execution_mode
+        if recommended_execution_mode is not None
+        else os.environ.get(ENV_RECOMMENDED_EXECUTION_MODE, "").strip() or None
+    )
+
+    config_error: str | None = None
+    plan_id = _parse_optional_positive_int(plan_raw)
+    preflight_id = _parse_optional_positive_int(preflight_raw)
+    mode = _parse_optional_recommended_execution_mode(mode_raw)
+
+    if plan_raw is not None and str(plan_raw).strip() and plan_id is None:
+        config_error = f"invalid {ENV_PAYOUT_PLAN_ID}: must be a positive integer"
+    elif preflight_raw is not None and str(preflight_raw).strip() and preflight_id is None:
+        config_error = (
+            f"invalid {ENV_PRODUCTION_PREFLIGHT_ID}: must be a positive integer"
+        )
+    elif mode_raw is not None and str(mode_raw).strip() and mode is None:
+        config_error = (
+            f"invalid {ENV_RECOMMENDED_EXECUTION_MODE}: "
+            f"must be one of {', '.join(sorted(RECOMMENDED_EXECUTION_MODES))}"
+        )
+
+    explicit = plan_id is not None and preflight_id is not None and mode is not None
+    if not explicit and config_error is None:
+        missing: list[str] = []
+        if plan_id is None:
+            missing.append(ENV_PAYOUT_PLAN_ID)
+        if preflight_id is None:
+            missing.append(ENV_PRODUCTION_PREFLIGHT_ID)
+        if mode is None:
+            missing.append(ENV_RECOMMENDED_EXECUTION_MODE)
+        if missing:
+            config_error = None
+
+    return SchedulerTargetConfig(
+        payout_plan_id=plan_id,
+        production_preflight_id=preflight_id,
+        recommended_execution_mode=mode,
+        explicit_target_configured=explicit,
+        config_error=config_error,
+    )
+
+
+def format_safe_skip_message(reason: str) -> str:
+    return f"{SAFE_SKIP_PREFIX}: {reason}"
+
+
+def validate_on_calendar_schedule(value: str | None) -> tuple[bool, str | None]:
+    schedule = str(value or "").strip()
+    if not schedule:
+        return False, "OnCalendar schedule is empty"
+    if schedule.startswith("@") and schedule.endswith("@"):
+        return False, f"OnCalendar schedule is an unresolved placeholder: {schedule}"
+    return True, None
+
+
+def resolve_scheduler_mode(
+    *,
+    cli_value: str | None = None,
+) -> str:
+    raw = cli_value if cli_value is not None else os.environ.get(ENV_SCHEDULER_MODE, "").strip()
+    if not raw:
+        return MODE_REPORT_ONLY
+    return normalize_scheduler_mode(raw)
 
 
 def load_execution_config(
@@ -352,8 +478,10 @@ def scheduler_exit_code(report: SchedulerReport) -> int:
         return EXIT_HALT
     if report.refusal_reason and "requires configured approval" in report.refusal_reason:
         return EXIT_USAGE_ERROR
+    if report.refusal_reason and report.refusal_reason.startswith(SAFE_SKIP_PREFIX):
+        return EXIT_SUCCESS
     if report.refusal_reason and "requires --enable-real-execution" in report.refusal_reason:
-        return EXIT_USAGE_ERROR
+        return EXIT_SUCCESS
     if not report.cadence.get("cadence_eligible", False):
         return EXIT_SAFE_SKIP
     if not bool(report.gates.get("allowed")):

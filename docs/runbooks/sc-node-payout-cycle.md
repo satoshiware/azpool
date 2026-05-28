@@ -234,7 +234,7 @@ See [sc-node-manual-periodic-payout-runner.md](../payouts/docs/sc-node-manual-pe
 - [ ] `sc_node_payout_scheduler.py` with explicit `--payout-plan-id`, `--production-preflight-id`, `--recommended-execution-mode`
 - [ ] Confirm `scheduler_mode=report-only` output shows cadence eligibility and gate refusal reasons
 - [ ] For delegate testing: `dry-run-delegate` with configured env approval phrases (no sends)
-- [ ] **Do not enable** `deploy/systemd/azcoin-sc-node-payout-scheduler.timer` without operator decision and valid plan/preflight IDs
+- [ ] **Do not enable timer** without operator decision, valid plan/preflight IDs in `payout-scheduler.env`, and non-empty `OnCalendar` via `deploy/scripts/install-azcoin-sc-node-payout-scheduler.sh --timer`
 - [ ] `execute-enabled` requires `--enable-real-execution YES_ENABLE_UNATTENDED_PAYOUT_EXECUTION` plus env phrases
 
 See [sc-node-payout-scheduler.md](../payouts/docs/sc-node-payout-scheduler.md).
