@@ -751,14 +751,21 @@ def render_scheduler_env_content(lines: list[str]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def write_scheduler_env_file(
-    path: str,
-    lines: list[str],
+def _scheduler_env_target_writable(target: Path) -> bool:
+    return target.is_file() and os.access(target, os.F_OK | os.W_OK)
+
+
+def _scheduler_env_parent_writable(target: Path) -> bool:
+    parent = target.parent
+    return parent.exists() and os.access(parent, os.W_OK)
+
+
+def _write_scheduler_env_atomic(
+    target: Path,
+    content: str,
     *,
-    file_mode: int = DEFAULT_SCHEDULER_ENV_FILE_MODE,
+    file_mode: int,
 ) -> None:
-    content = render_scheduler_env_content(lines)
-    target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp_path = tempfile.mkstemp(
         prefix=f".{target.name}.",
@@ -774,6 +781,31 @@ def write_scheduler_env_file(
     except Exception:
         tmp.unlink(missing_ok=True)
         raise
+
+
+def _write_scheduler_env_in_place(target: Path, content: str) -> None:
+    with open(target, "w", encoding="utf-8") as handle:
+        handle.write(content)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def write_scheduler_env_file(
+    path: str,
+    lines: list[str],
+    *,
+    file_mode: int = DEFAULT_SCHEDULER_ENV_FILE_MODE,
+) -> None:
+    content = render_scheduler_env_content(lines)
+    target = Path(path)
+    try:
+        _write_scheduler_env_atomic(target, content, file_mode=file_mode)
+    except PermissionError:
+        if not _scheduler_env_target_writable(target):
+            raise
+        if _scheduler_env_parent_writable(target):
+            raise
+        _write_scheduler_env_in_place(target, content)
 
 
 def evaluate_execute_live_refusal(config: FreshCycleConfig) -> str | None:

@@ -552,9 +552,60 @@ def test_install_script_sets_pool_ledger_azledger_permissions() -> None:
     text = (
         AZPOOL_ROOT / "deploy/scripts/install-azcoin-sc-node-fresh-cycle-automation.sh"
     ).read_text(encoding="utf-8")
-    assert "g azledger" in text
+    assert "pool-ledger-layout.sh" in text
+    assert "pool_ledger_ensure_layout" in text
+    assert "SCHEDULER_ENV_MODE" in text
+
+
+def test_payout_scheduler_install_uses_pool_ledger_layout_lib() -> None:
+    text = (
+        AZPOOL_ROOT / "deploy/scripts/install-azcoin-sc-node-payout-scheduler.sh"
+    ).read_text(encoding="utf-8")
+    assert "pool-ledger-layout.sh" in text
+    assert "pool_ledger_ensure_layout" in text
+    assert "SCHEDULER_ENV_MODE" in text
+
+
+def test_discover_script_never_prints_database_url_literal() -> None:
+    text = (
+        AZPOOL_ROOT / "deploy/scripts/discover-sc-node-current-state.sh"
+    ).read_text(encoding="utf-8")
+    assert "pool_ledger_db_smoke_test" in text
+    assert "Never print DATABASE_URL" in (
+        AZPOOL_ROOT / "deploy/scripts/lib/pool-ledger-layout.sh"
+    ).read_text(encoding="utf-8")
+
+
+def test_fresh_install_scheduler_env_defaults_report_only() -> None:
+    text = (
+        AZPOOL_ROOT / "deploy/systemd/payout-scheduler.env.example"
+    ).read_text(encoding="utf-8")
+    assert "SC_NODE_PAYOUT_SCHEDULER_MODE=report-only" in text
     assert "0660" in text
-    assert 'POOL_LEDGER_DIR="/etc/azcoin-super/pool-ledger"' in text
+
+
+def test_fresh_cycle_env_example_has_no_execute_live_secrets() -> None:
+    text = (
+        AZPOOL_ROOT / "deploy/systemd/fresh-cycle-automation.env.example"
+    ).read_text(encoding="utf-8")
+    uncommented = "\n".join(
+        line
+        for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    )
+    assert "AZCOIN_FRESH_CYCLE_AUTOMATION_ENABLE_REAL_EXECUTION=YES" not in uncommented
+    assert "AZCOIN_FRESH_CYCLE_AUTOMATION_RUNNER_APPROVAL_PHRASE=YES" not in uncommented
+    assert "AZCOIN_FRESH_CYCLE_AUTOMATION_AZC_BIN_EXECUTE" in text
+
+
+def test_pool_ledger_layout_lib_documents_protected_paths() -> None:
+    text = (
+        AZPOOL_ROOT / "deploy/scripts/lib/pool-ledger-layout.sh"
+    ).read_text(encoding="utf-8")
+    assert 'POOL_LEDGER_DIR="${POOL_LEDGER_DIR:-/etc/azcoin-super/pool-ledger}"' in text
+    assert "POOL_LEDGER_DIR_MODE" in text
+    assert "SCHEDULER_ENV_MODE" in text
+    assert "Never print DATABASE_URL" in text
 
 
 def test_service_unit_uses_environmentfile_not_shell_source() -> None:
@@ -574,6 +625,106 @@ def test_write_scheduler_env_file_writes_atomically_with_group_mode(tmp_path: Pa
     content = target.read_text(encoding="utf-8")
     assert "SC_NODE_PAYOUT_SCHEDULER_MODE=report-only" in content
     assert (target.stat().st_mode & 0o777) == fresh.DEFAULT_SCHEDULER_ENV_FILE_MODE
+
+
+def test_write_scheduler_env_file_writes_atomically_with_group_mode(tmp_path: Path) -> None:
+    target = tmp_path / "payout-scheduler.env"
+    fresh.write_scheduler_env_file(
+        str(target),
+        fresh.build_safe_skip_scheduler_env_lines(),
+    )
+    content = target.read_text(encoding="utf-8")
+    assert "SC_NODE_PAYOUT_SCHEDULER_MODE=report-only" in content
+    assert (target.stat().st_mode & 0o777) == fresh.DEFAULT_SCHEDULER_ENV_FILE_MODE
+
+
+def test_write_scheduler_env_file_atomic_when_directory_writable(tmp_path: Path) -> None:
+    target = tmp_path / "payout-scheduler.env"
+    before_inode = None
+    fresh.write_scheduler_env_file(
+        str(target),
+        fresh.build_safe_skip_scheduler_env_lines(),
+    )
+    before_inode = target.stat().st_ino
+    fresh.write_scheduler_env_file(
+        str(target),
+        fresh.build_scheduler_target_env_lines(
+            payout_plan_id=1,
+            production_preflight_id=2,
+            recommended_execution_mode="single",
+            source_wallet_name="wallet",
+        ),
+    )
+    assert target.stat().st_ino != before_inode
+    assert "SC_NODE_PAYOUT_SCHEDULER_PAYOUT_PLAN_ID=1" in target.read_text(encoding="utf-8")
+
+
+def test_write_scheduler_env_file_fallback_in_place_when_dir_not_writable(
+    tmp_path: Path,
+) -> None:
+    pool_dir = tmp_path / "pool-ledger"
+    pool_dir.mkdir()
+    target = pool_dir / "payout-scheduler.env"
+    target.write_text("SC_NODE_PAYOUT_SCHEDULER_MODE=execute-enabled\n", encoding="utf-8")
+    target.chmod(0o660)
+    before_inode = target.stat().st_ino
+    before_mode = target.stat().st_mode & 0o777
+    pool_dir.chmod(0o550)
+
+    fresh.write_scheduler_env_file(
+        str(target),
+        fresh.build_safe_skip_scheduler_env_lines(),
+    )
+
+    assert target.stat().st_ino == before_inode
+    assert (target.stat().st_mode & 0o777) == before_mode
+    assert "SC_NODE_PAYOUT_SCHEDULER_MODE=report-only" in target.read_text(encoding="utf-8")
+
+
+def test_write_scheduler_env_file_fallback_refuses_missing_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pool_dir = tmp_path / "pool-ledger"
+    pool_dir.mkdir()
+    pool_dir.chmod(0o550)
+    target = pool_dir / "payout-scheduler.env"
+
+    def _deny_mkstemp(*args: object, **kwargs: object) -> tuple[int, str]:
+        raise PermissionError("cannot create temp file in protected directory")
+
+    monkeypatch.setattr(fresh.tempfile, "mkstemp", _deny_mkstemp)
+
+    with pytest.raises(PermissionError):
+        fresh.write_scheduler_env_file(
+            str(target),
+            fresh.build_safe_skip_scheduler_env_lines(),
+        )
+    assert not target.exists()
+
+
+def test_write_scheduler_env_file_fallback_refuses_non_writable_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pool_dir = tmp_path / "pool-ledger"
+    pool_dir.mkdir()
+    target = pool_dir / "payout-scheduler.env"
+    target.write_text("old\n", encoding="utf-8")
+    target.chmod(0o440)
+    pool_dir.chmod(0o550)
+
+    def _deny_mkstemp(*args: object, **kwargs: object) -> tuple[int, str]:
+        raise PermissionError("cannot create temp file in protected directory")
+
+    monkeypatch.setattr(fresh.tempfile, "mkstemp", _deny_mkstemp)
+
+    with pytest.raises(PermissionError):
+        fresh.write_scheduler_env_file(
+            str(target),
+            fresh.build_safe_skip_scheduler_env_lines(),
+        )
+    assert target.read_text(encoding="utf-8") == "old\n"
 
 
 def test_partial_artifact_refusal_explains_resume() -> None:

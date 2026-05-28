@@ -6,12 +6,14 @@ set -euo pipefail
 # Service-only install is safe: missing explicit target IDs => SAFE_SKIP exit 0.
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=lib/pool-ledger-layout.sh
+source "${REPO_ROOT}/deploy/scripts/lib/pool-ledger-layout.sh"
 SERVICE_SRC="${REPO_ROOT}/deploy/systemd/azcoin-sc-node-payout-scheduler.service"
 TIMER_TEMPLATE="${REPO_ROOT}/deploy/systemd/azcoin-sc-node-payout-scheduler.timer.template"
 SERVICE_DST="/etc/systemd/system/azcoin-sc-node-payout-scheduler.service"
 TIMER_DST="/etc/systemd/system/azcoin-sc-node-payout-scheduler.timer"
 ENV_EXAMPLE="${REPO_ROOT}/deploy/systemd/payout-scheduler.env.example"
-ENV_DST="/etc/azcoin-super/pool-ledger/payout-scheduler.env"
+ENV_DST="${SCHEDULER_ENV}"
 
 INSTALL_TIMER=0
 ON_CALENDAR="${SC_NODE_PAYOUT_SCHEDULER_ON_CALENDAR:-}"
@@ -64,10 +66,15 @@ if [[ ! -f "${SERVICE_SRC}" ]]; then
   exit 1
 fi
 
-install -d -o root -g root -m 0750 /etc/azcoin-super/pool-ledger
+pool_ledger_ensure_layout
+
 if [[ -f "${ENV_EXAMPLE}" && ! -f "${ENV_DST}" ]]; then
-  install -m 0640 -o root -g azledger "${ENV_EXAMPLE}" "${ENV_DST}"
+  install -m "${SCHEDULER_ENV_MODE}" -o root -g azledger "${ENV_EXAMPLE}" "${ENV_DST}"
   echo "ENV_EXAMPLE_OK path=${ENV_DST} (edit before enabling timer)"
+elif [[ -f "${ENV_DST}" ]]; then
+  chown root:azledger "${ENV_DST}"
+  chmod "${SCHEDULER_ENV_MODE}" "${ENV_DST}"
+  echo "ENV_PERMS_OK path=${ENV_DST} (root:azledger ${SCHEDULER_ENV_MODE})"
 fi
 
 install -m 0644 -o root -g root "${SERVICE_SRC}" "${SERVICE_DST}"

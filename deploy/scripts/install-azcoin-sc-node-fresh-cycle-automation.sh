@@ -2,14 +2,14 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+# shellcheck source=lib/pool-ledger-layout.sh
+source "${REPO_ROOT}/deploy/scripts/lib/pool-ledger-layout.sh"
 SERVICE_SRC="${REPO_ROOT}/deploy/systemd/azcoin-sc-node-fresh-cycle-automation.service"
 TIMER_TEMPLATE="${REPO_ROOT}/deploy/systemd/azcoin-sc-node-fresh-cycle-automation.timer.template"
 SERVICE_DST="/etc/systemd/system/azcoin-sc-node-fresh-cycle-automation.service"
 TIMER_DST="/etc/systemd/system/azcoin-sc-node-fresh-cycle-automation.timer"
 ENV_EXAMPLE="${REPO_ROOT}/deploy/systemd/fresh-cycle-automation.env.example"
-ENV_DST="/etc/azcoin-super/pool-ledger/fresh-cycle-automation.env"
-POOL_LEDGER_DIR="/etc/azcoin-super/pool-ledger"
-SCHEDULER_ENV_DST="${POOL_LEDGER_DIR}/payout-scheduler.env"
+ENV_DST="${FRESH_CYCLE_ENV}"
 
 INSTALL_TIMER=0
 ON_CALENDAR="${AZCOIN_FRESH_CYCLE_AUTOMATION_ON_CALENDAR:-*:0/30}"
@@ -52,24 +52,21 @@ if [[ "${EUID}" -ne 0 ]]; then
   exit 1
 fi
 
-install -d -o root -g azledger -m 0750 "${POOL_LEDGER_DIR}"
-# Ensure azledger can traverse pool-ledger for EnvironmentFile reads and scheduler env writes.
-chown root:azledger "${POOL_LEDGER_DIR}"
-chmod 0750 "${POOL_LEDGER_DIR}"
+pool_ledger_ensure_layout
 
 if [[ -f "${ENV_EXAMPLE}" && ! -f "${ENV_DST}" ]]; then
-  install -m 0640 -o root -g azledger "${ENV_EXAMPLE}" "${ENV_DST}"
+  install -m "${FRESH_CYCLE_ENV_MODE}" -o root -g azledger "${ENV_EXAMPLE}" "${ENV_DST}"
   echo "ENV_EXAMPLE_OK path=${ENV_DST}"
 elif [[ -f "${ENV_DST}" ]]; then
   chown root:azledger "${ENV_DST}"
-  chmod 0640 "${ENV_DST}"
-  echo "ENV_PERMS_OK path=${ENV_DST} (root:azledger 0640)"
+  chmod "${FRESH_CYCLE_ENV_MODE}" "${ENV_DST}"
+  echo "ENV_PERMS_OK path=${ENV_DST} (root:azledger ${FRESH_CYCLE_ENV_MODE})"
 fi
 
-if [[ -f "${SCHEDULER_ENV_DST}" ]]; then
-  chown root:azledger "${SCHEDULER_ENV_DST}"
-  chmod 0660 "${SCHEDULER_ENV_DST}"
-  echo "SCHEDULER_ENV_PERMS_OK path=${SCHEDULER_ENV_DST} (root:azledger 0660)"
+if [[ -f "${SCHEDULER_ENV}" ]]; then
+  chown root:azledger "${SCHEDULER_ENV}"
+  chmod "${SCHEDULER_ENV_MODE}" "${SCHEDULER_ENV}"
+  echo "SCHEDULER_ENV_PERMS_OK path=${SCHEDULER_ENV} (root:azledger ${SCHEDULER_ENV_MODE})"
 fi
 
 install -m 0644 -o root -g root "${SERVICE_SRC}" "${SERVICE_DST}"
