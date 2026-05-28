@@ -94,7 +94,14 @@ After execution the scheduler env is restored to safe report-only (no explicit t
 .venv/bin/python payouts/scripts/sc_node_fresh_cycle_automation.py confirm-sent --json
 ```
 
-Marks `sent` fresh-cycle executions confirmed using existing executor `mark-confirmed` commands (read-only chain evidence). No sends.
+Finds `sent` FRESH-CYCLE production executions with non-null `txid` (ignores `refused` and txid-less rows). Single-tx executions delegate to production executor `mark-confirmed` with read-only `gettransaction` (`confirmations >= 1`) via `/usr/local/bin/azc-payout-readonly`. Chunked executions use the chunked executor confirm path. No sends.
+
+### Wallet CLI selection
+
+| Mode | Default binary | Env override |
+|------|----------------|--------------|
+| preview / write-target / confirm-sent | `/usr/local/bin/azc-payout-readonly` | `AZCOIN_FRESH_CYCLE_AUTOMATION_AZC_BIN` |
+| execute-live (real send delegate) | `/usr/local/bin/azc-payout` | `AZCOIN_FRESH_CYCLE_AUTOMATION_AZC_BIN_EXECUTE` |
 
 ## Systemd install / enable
 

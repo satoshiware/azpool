@@ -38,10 +38,12 @@ ENV_FALLBACK_CHUNK_AMOUNT = "AZCOIN_FRESH_CYCLE_AUTOMATION_FALLBACK_CHUNK_AMOUNT
 ENV_ENABLE_REAL_EXECUTION = "AZCOIN_FRESH_CYCLE_AUTOMATION_ENABLE_REAL_EXECUTION"
 ENV_RUNNER_APPROVAL_PHRASE = "AZCOIN_FRESH_CYCLE_AUTOMATION_RUNNER_APPROVAL_PHRASE"
 ENV_AZC_BIN = "AZCOIN_FRESH_CYCLE_AUTOMATION_AZC_BIN"
+ENV_AZC_BIN_EXECUTE = "AZCOIN_FRESH_CYCLE_AUTOMATION_AZC_BIN_EXECUTE"
 ENV_APPROVED_BY = "AZCOIN_FRESH_CYCLE_AUTOMATION_APPROVED_BY"
 ENV_MIN_PAYOUT_AMOUNT = "AZCOIN_FRESH_CYCLE_AUTOMATION_MIN_PAYOUT_AMOUNT"
 
 DEFAULT_AZC_BIN_READONLY = "/usr/local/bin/azc-payout-readonly"
+DEFAULT_AZC_BIN_EXECUTE = "/usr/local/bin/azc-payout"
 
 ENABLE_REAL_EXECUTION_TOKEN = "YES_ENABLE_FRESH_CYCLE_AUTOMATION"
 RUNNER_APPROVAL_PHRASE = periodic_runner.RUNNER_APPROVAL_PHRASE
@@ -172,6 +174,18 @@ def resolve_azc_bin(explicit: str | None = None) -> str:
     if legacy_azc and legacy_azc != "azc":
         return legacy_azc
     return DEFAULT_AZC_BIN_READONLY
+
+
+def resolve_azc_bin_for_execute_live(explicit: str | None = None) -> str:
+    if explicit is not None and str(explicit).strip():
+        return str(explicit).strip()
+    env_value = os.environ.get(ENV_AZC_BIN_EXECUTE, "").strip()
+    if env_value:
+        return env_value
+    legacy_azc = os.environ.get("AZC_BIN", "").strip()
+    if legacy_azc and legacy_azc not in ("azc", DEFAULT_AZC_BIN_READONLY):
+        return legacy_azc
+    return DEFAULT_AZC_BIN_EXECUTE
 
 
 def parse_optional_min_payout_amount(value: str | None) -> Decimal | None:
@@ -976,20 +990,53 @@ SELECT
   id,
   payout_plan_id,
   production_preflight_id,
+  source_wallet_name,
   status,
   planned_amount_total,
-  primary_txid,
+  txid,
   idempotency_key,
   notes,
   created_at,
   updated_at
 FROM sc_node_payout_production_executions
 WHERE status = 'sent'
+  AND txid IS NOT NULL
   AND idempotency_key LIKE 'FRESH-CYCLE-%'
 ORDER BY id ASC
 """.strip()
     credit_ledger._assert_readonly_sql(sql)
     return sql
+
+
+def build_confirm_sent_mark_confirmed_argv(
+    *,
+    python_executable: str,
+    repo_root: str,
+    production_execution_id: int,
+    source_wallet_name: str,
+    azc_bin: str,
+    notes: str,
+) -> list[str]:
+    if chunked_executor.is_chunked_execution_notes(notes):
+        return [
+            python_executable,
+            f"{repo_root.rstrip('/')}/payouts/scripts/sc_node_payout_production_chunked_executor.py",
+            "mark-confirmed",
+            "--production-execution-id",
+            str(int(production_execution_id)),
+        ]
+    return [
+        python_executable,
+        f"{repo_root.rstrip('/')}/payouts/scripts/sc_node_payout_production_executor.py",
+        "mark-confirmed",
+        "--production-execution-id",
+        str(int(production_execution_id)),
+        "--confirm-chain-evidence",
+        "--source-wallet-name",
+        production_preflight.normalize_source_wallet_name(source_wallet_name),
+        "--azc-bin",
+        azc_bin,
+    ]
 
 
 def _event_time(row: Mapping[str, Any]) -> datetime:

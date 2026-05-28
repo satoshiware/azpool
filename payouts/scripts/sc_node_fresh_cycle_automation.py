@@ -23,7 +23,6 @@ from payouts.collector.app import sc_node_credit_ledger as credit_ledger
 from payouts.collector.app import sc_node_fresh_cycle_automation as automation
 from payouts.collector.app import sc_node_payout_plan_review as plan_review
 from payouts.collector.app import sc_node_payout_planner as payout_planner
-from payouts.collector.app import sc_node_payout_production_chunked_executor as chunked_executor
 from payouts.collector.app import sc_node_payout_production_preflight as production_preflight
 from payouts.scripts import sc_node_payout_production_preflight as preflight_cli
 
@@ -836,7 +835,7 @@ def _cmd_execute_live(args: argparse.Namespace, config: automation.FreshCycleCon
             recommended_execution_mode=execution_plan.recommended_execution_mode,
             idempotency_key=idempotency_key,
             source_wallet_name=config.wallet_name,
-            azc_bin=config.azc_bin,
+            azc_bin=automation.resolve_azc_bin_for_execute_live(),
             runner_approval_phrase=config.runner_approval_phrase or automation.RUNNER_APPROVAL_PHRASE,
             executor_confirm_phrase=execution_plan.executor_confirm_phrase,
             chunk_amount=execution_plan.chunk_amount,
@@ -895,6 +894,7 @@ def _cmd_execute_live(args: argparse.Namespace, config: automation.FreshCycleCon
 
 def _cmd_confirm_sent(args: argparse.Namespace) -> int:
     database_url = _database_url()
+    confirm_azc_bin = automation.resolve_azc_bin()
     confirmed: list[dict[str, Any]] = []
     with psycopg.connect(database_url) as conn:
         with conn.cursor(row_factory=dict_row) as cur:
@@ -903,25 +903,14 @@ def _cmd_confirm_sent(args: argparse.Namespace) -> int:
     for row in rows:
         execution_id = int(row["id"])
         notes = str(row.get("notes") or "")
-        if chunked_executor.is_chunked_execution_notes(notes):
-            script = REPO_ROOT / "payouts/scripts/sc_node_payout_production_chunked_executor.py"
-            argv = [
-                sys.executable,
-                str(script),
-                "mark-confirmed",
-                "--production-execution-id",
-                str(execution_id),
-            ]
-        else:
-            script = REPO_ROOT / "payouts/scripts/sc_node_payout_production_executor.py"
-            argv = [
-                sys.executable,
-                str(script),
-                "mark-confirmed",
-                "--production-execution-id",
-                str(execution_id),
-                "--confirm-chain-evidence",
-            ]
+        argv = automation.build_confirm_sent_mark_confirmed_argv(
+            python_executable=sys.executable,
+            repo_root=str(REPO_ROOT),
+            production_execution_id=execution_id,
+            source_wallet_name=str(row["source_wallet_name"]),
+            azc_bin=confirm_azc_bin,
+            notes=notes,
+        )
         completed = subprocess.run(
             argv,
             check=False,
@@ -934,6 +923,7 @@ def _cmd_confirm_sent(args: argparse.Namespace) -> int:
         confirmed.append(
             {
                 "production_execution_id": execution_id,
+                "txid": row.get("txid"),
                 "returncode": completed.returncode,
                 "stdout": automation.redact_secret_text(completed.stdout or ""),
                 "stderr": automation.redact_secret_text(completed.stderr or ""),

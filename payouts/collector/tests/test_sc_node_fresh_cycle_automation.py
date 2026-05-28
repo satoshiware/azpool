@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -857,6 +858,113 @@ def test_execute_live_finally_attempts_scheduler_restore_on_failure(
     assert rc != 0
     assert restore_calls == [str(scheduler_path)]
     assert "SC_NODE_PAYOUT_SCHEDULER_MODE=report-only" in scheduler_path.read_text(encoding="utf-8")
+
+
+def test_sent_fresh_cycle_executions_sql_uses_txid_not_primary_txid() -> None:
+    sql = fresh.build_sent_fresh_cycle_executions_sql()
+    assert "txid" in sql
+    assert "primary_txid" not in sql
+    assert "txid IS NOT NULL" in sql
+    assert "status = 'sent'" in sql
+    assert "FRESH-CYCLE-" in sql
+    assert "source_wallet_name" in sql
+
+
+def test_confirm_sent_mark_confirmed_argv_uses_readonly_azc_and_chain_evidence() -> None:
+    argv = fresh.build_confirm_sent_mark_confirmed_argv(
+        python_executable=sys.executable,
+        repo_root=str(AZPOOL_ROOT),
+        production_execution_id=8,
+        source_wallet_name="wallet",
+        azc_bin="/usr/local/bin/azc-payout-readonly",
+        notes="fresh-cycle-automation",
+    )
+    assert "sc_node_payout_production_executor.py" in argv[1]
+    assert "--confirm-chain-evidence" in argv
+    assert "--source-wallet-name" in argv
+    assert argv[argv.index("--source-wallet-name") + 1] == "wallet"
+    assert argv[argv.index("--azc-bin") + 1] == "/usr/local/bin/azc-payout-readonly"
+    assert "sendtoaddress" not in " ".join(argv)
+
+
+def test_confirm_sent_skips_refused_executions_via_sql_status_filter() -> None:
+    sql = fresh.build_sent_fresh_cycle_executions_sql()
+    assert "status = 'sent'" in sql
+    assert "refused" not in sql.lower()
+
+
+def test_resolve_azc_bin_for_execute_live_defaults_to_send_wrapper() -> None:
+    assert fresh.resolve_azc_bin_for_execute_live() == fresh.DEFAULT_AZC_BIN_EXECUTE
+
+
+def test_resolve_azc_bin_for_execute_live_honors_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(
+        fresh.ENV_AZC_BIN_EXECUTE,
+        "/usr/local/bin/azc-payout",
+    )
+    assert fresh.resolve_azc_bin_for_execute_live() == "/usr/local/bin/azc-payout"
+
+
+def test_confirm_sent_command_delegates_with_txid_rows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from payouts.scripts import sc_node_fresh_cycle_automation as cli
+
+    captured_argv: list[list[str]] = []
+
+    def _fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        captured_argv.append(list(argv))
+        return subprocess.CompletedProcess(argv, 0, stdout='{"confirmed": true}', stderr="")
+
+    import subprocess as subprocess_module
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example")
+    monkeypatch.setattr(subprocess_module, "run", _fake_run)
+    monkeypatch.setattr(
+        cli,
+        "_database_url",
+        lambda: "postgresql://example",
+    )
+
+    class _FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def execute(self, _sql: str) -> None:
+            return None
+
+        def fetchall(self) -> list[dict[str, object]]:
+            return [
+                {
+                    "id": 8,
+                    "source_wallet_name": "wallet",
+                    "txid": "abc123",
+                    "notes": "fresh-cycle-automation",
+                }
+            ]
+
+    class _FakeConn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def cursor(self, **kwargs: object) -> _FakeCursor:
+            return _FakeCursor()
+
+    monkeypatch.setattr(cli.psycopg, "connect", lambda _url: _FakeConn())
+    monkeypatch.setenv(fresh.ENV_AZC_BIN, "/usr/local/bin/azc-payout-readonly")
+
+    assert cli.main(["confirm-sent", "--json"]) == 0
+    assert len(captured_argv) == 1
+    argv = captured_argv[0]
+    assert "--confirm-chain-evidence" in argv
+    assert argv[argv.index("--azc-bin") + 1] == "/usr/local/bin/azc-payout-readonly"
+    assert argv[argv.index("--production-execution-id") + 1] == "8"
 
 
 def test_module_has_no_sendtoaddress_literal() -> None:
