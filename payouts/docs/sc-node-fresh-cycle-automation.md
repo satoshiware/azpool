@@ -59,6 +59,15 @@ Optional reward scan first:
 
 Zero fresh rewards → `SAFE_SKIP` exit 0.
 
+Preview JSON includes wallet preflight fields when fresh rewards exist:
+
+- `preflight_status`, `execution_allowed`, `trusted_balance`, `reserve_amount`, `spendable_after_reserve`
+- `wallet_balance_source`, `utxo_chunking_policy`, `recommended_execution_mode`
+- `refusal_reason` — always non-null when `recommended_execution_mode` is `halt`
+- `azc_bin` — wallet CLI used for scan/preflight (defaults to `/usr/local/bin/azc-payout-readonly`, not bare `azc`)
+
+Optional `AZCOIN_FRESH_CYCLE_AUTOMATION_MIN_PAYOUT_AMOUNT` refuses payouts below a configured threshold with an explicit refusal reason.
+
 ### Write-target (timer default)
 
 ```bash

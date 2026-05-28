@@ -46,6 +46,7 @@ def test_zero_fresh_rewards_returns_none_selection() -> None:
         azc_bin="azc",
         approved_by="test",
         scheduler_env_path="/tmp/payout-scheduler.env",
+        min_payout_amount=None,
     )
     historical = _event(1, "10", _BASELINE - timedelta(hours=1))
     fresh_after = _event(2, "5", _PRIOR_END + timedelta(hours=1))
@@ -80,6 +81,7 @@ def test_rewards_before_baseline_counted_as_historical_backlog_only() -> None:
         azc_bin="azc",
         approved_by="test",
         scheduler_env_path="/tmp/payout-scheduler.env",
+        min_payout_amount=None,
     )
     events = [
         _event(1, "100", _BASELINE - timedelta(days=1)),
@@ -159,6 +161,7 @@ def test_execute_live_refuses_without_enable_token() -> None:
         azc_bin="azc",
         approved_by="test",
         scheduler_env_path="/tmp/payout-scheduler.env",
+        min_payout_amount=None,
     )
     refusal = fresh.evaluate_execute_live_refusal(config)
     assert refusal is not None
@@ -178,6 +181,7 @@ def test_execute_live_refuses_without_runner_phrase() -> None:
         azc_bin="azc",
         approved_by="test",
         scheduler_env_path="/tmp/payout-scheduler.env",
+        min_payout_amount=None,
     )
     refusal = fresh.evaluate_execute_live_refusal(config)
     assert refusal is not None
@@ -320,6 +324,206 @@ def test_timer_template_has_nonempty_oncalendar_placeholder() -> None:
     text = template.read_text(encoding="utf-8")
     assert "OnCalendar=@AZCOIN_FRESH_CYCLE_AUTOMATION_ON_CALENDAR@" in text
     assert "OnCalendar=\n" not in text
+
+
+def test_resolve_azc_bin_honors_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(
+        fresh.ENV_AZC_BIN,
+        "/usr/local/bin/azc-payout-readonly",
+    )
+    assert fresh.resolve_azc_bin() == "/usr/local/bin/azc-payout-readonly"
+
+
+def test_resolve_azc_bin_defaults_to_readonly_wrapper() -> None:
+    assert fresh.resolve_azc_bin() == fresh.DEFAULT_AZC_BIN_READONLY
+
+
+def test_preview_tiny_payout_with_balance_recommends_single_not_unexplained_halt() -> None:
+    preview = production_preflight.ProductionPayoutPreflightPreview(
+        payout_plan_id=0,
+        source_wallet_name="wallet",
+        execution_allowed=True,
+        refusal_reason=None,
+        wallet_balance=production_preflight.WalletBalance(
+            trusted=Decimal("1000"),
+            immature=Decimal("0"),
+        ),
+        planned_amount_total=Decimal("1.875000000000"),
+        reserve_mode=production_preflight.RESERVE_MODE_PERCENT,
+        reserve_percent=Decimal("0.5"),
+        reserve_amount=Decimal("500"),
+        spendable_after_reserve=Decimal("500"),
+        max_spend_percent=Decimal("0.5"),
+        max_spend_allowed=Decimal("500"),
+        operator_override=False,
+        row_count=1,
+        rows=(),
+        utxo_chunking_policy=production_preflight.UtxoChunkingPolicy(
+            spendable_balance=Decimal("1000"),
+            planned_payout_amount=Decimal("1.875000000000"),
+            reserve_requirement=Decimal("500"),
+            available_after_reserve=Decimal("500"),
+            utxo_count=21,
+            max_observed_utxo_amount=Decimal("2"),
+            target_single_tx_max_amount=Decimal("500"),
+            fallback_chunk_amount=Decimal("25"),
+            recommended_chunk_size=Decimal("1.875000000000"),
+            estimated_chunk_count=1,
+            fragmentation_risk=production_preflight.FRAGMENTATION_RISK_LOW,
+            recommended_execution_mode=production_preflight.RECOMMENDED_EXECUTION_MODE_SINGLE,
+            refusal_reason=None,
+            wallet_utxo_source=production_preflight.WALLET_UTXO_SOURCE_AZC_LISTUNSPENT,
+            utxo_evidence_note=None,
+        ),
+    )
+    plan = fresh.build_execution_plan(
+        preflight_preview=preview,
+        payout_plan_id=0,
+        source_wallet_name="wallet",
+    )
+    assert plan.recommended_execution_mode == production_preflight.RECOMMENDED_EXECUTION_MODE_SINGLE
+    assert plan.refusal_reason is None
+
+
+def test_halt_always_includes_refusal_reason() -> None:
+    preview = production_preflight.ProductionPayoutPreflightPreview(
+        payout_plan_id=0,
+        source_wallet_name="wallet",
+        execution_allowed=False,
+        refusal_reason="planned_amount_total exceeds spendable_after_reserve (1)",
+        wallet_balance=production_preflight.WalletBalance(
+            trusted=Decimal("1"),
+            immature=Decimal("0"),
+        ),
+        planned_amount_total=Decimal("1.875000000000"),
+        reserve_mode=production_preflight.RESERVE_MODE_PERCENT,
+        reserve_percent=Decimal("0.5"),
+        reserve_amount=Decimal("0.5"),
+        spendable_after_reserve=Decimal("0.5"),
+        max_spend_percent=Decimal("0.5"),
+        max_spend_allowed=Decimal("0.5"),
+        operator_override=False,
+        row_count=1,
+        rows=(),
+        utxo_chunking_policy=production_preflight.UtxoChunkingPolicy(
+            spendable_balance=Decimal("1"),
+            planned_payout_amount=Decimal("1.875000000000"),
+            reserve_requirement=Decimal("0.5"),
+            available_after_reserve=Decimal("0.5"),
+            utxo_count=1,
+            max_observed_utxo_amount=Decimal("1"),
+            target_single_tx_max_amount=Decimal("500"),
+            fallback_chunk_amount=Decimal("25"),
+            recommended_chunk_size=Decimal("25"),
+            estimated_chunk_count=1,
+            fragmentation_risk=production_preflight.FRAGMENTATION_RISK_LOW,
+            recommended_execution_mode=production_preflight.RECOMMENDED_EXECUTION_MODE_HALT,
+            refusal_reason="planned_amount_total exceeds spendable_after_reserve (1)",
+            wallet_utxo_source=production_preflight.WALLET_UTXO_SOURCE_AZC_LISTUNSPENT,
+            utxo_evidence_note=None,
+        ),
+    )
+    plan = fresh.build_execution_plan(
+        preflight_preview=preview,
+        payout_plan_id=0,
+        source_wallet_name="wallet",
+    )
+    assert plan.recommended_execution_mode == production_preflight.RECOMMENDED_EXECUTION_MODE_HALT
+    assert plan.refusal_reason is not None
+    assert "spendable_after_reserve" in plan.refusal_reason
+
+
+def test_preview_summary_includes_preflight_fields_when_halted() -> None:
+    preview = production_preflight.ProductionPayoutPreflightPreview(
+        payout_plan_id=0,
+        source_wallet_name="wallet",
+        execution_allowed=False,
+        refusal_reason="insufficient balance",
+        wallet_balance=production_preflight.WalletBalance(
+            trusted=Decimal("1"),
+            immature=Decimal("0"),
+        ),
+        planned_amount_total=Decimal("1.875000000000"),
+        reserve_mode=production_preflight.RESERVE_MODE_PERCENT,
+        reserve_percent=Decimal("0.5"),
+        reserve_amount=Decimal("0.5"),
+        spendable_after_reserve=Decimal("0.5"),
+        max_spend_percent=Decimal("0.5"),
+        max_spend_allowed=Decimal("0.5"),
+        operator_override=False,
+        row_count=1,
+        rows=(),
+        utxo_chunking_policy=production_preflight.UtxoChunkingPolicy(
+            spendable_balance=Decimal("1"),
+            planned_payout_amount=Decimal("1.875000000000"),
+            reserve_requirement=Decimal("0.5"),
+            available_after_reserve=Decimal("0.5"),
+            utxo_count=1,
+            max_observed_utxo_amount=Decimal("1"),
+            target_single_tx_max_amount=Decimal("500"),
+            fallback_chunk_amount=Decimal("25"),
+            recommended_chunk_size=Decimal("25"),
+            estimated_chunk_count=1,
+            fragmentation_risk=production_preflight.FRAGMENTATION_RISK_LOW,
+            recommended_execution_mode=production_preflight.RECOMMENDED_EXECUTION_MODE_HALT,
+            refusal_reason="insufficient balance",
+            wallet_utxo_source=production_preflight.WALLET_UTXO_SOURCE_AZC_LISTUNSPENT,
+            utxo_evidence_note=None,
+        ),
+    )
+    execution_plan = fresh.build_execution_plan(
+        preflight_preview=preview,
+        payout_plan_id=0,
+        source_wallet_name="wallet",
+    )
+    config = fresh.load_config_from_env(mode_override=fresh.MODE_PREVIEW)
+    payload = fresh.build_preview_summary(
+        config=config,
+        selection=fresh.build_fresh_cycle_selection(
+            config=config,
+            unlinked_events=[_event(2, "1.875000000000", _PRIOR_END + timedelta(hours=1))],
+            latest_credit_run_coverage_end=_PRIOR_END,
+            exclude_coverage_start_boundary=False,
+        ),
+        credit_preview=None,
+        preflight_preview=preview,
+        execution_plan=execution_plan,
+    )
+    assert payload["recommended_execution_mode"] == "halt"
+    assert payload["refusal_reason"] is not None
+    assert payload["execution_allowed"] is False
+    assert payload["preflight_status"] == production_preflight.PREFLIGHT_STATUS_REFUSED
+    assert "utxo_chunking_policy" in payload
+
+
+def test_scan_rewards_uses_configured_azc_bin(monkeypatch: pytest.MonkeyPatch) -> None:
+    from payouts.scripts import sc_node_fresh_cycle_automation as cli
+
+    captured: dict[str, str] = {}
+
+    def _fake_scan(*, wallet_name: str, azc_bin: str) -> None:
+        captured["wallet_name"] = wallet_name
+        captured["azc_bin"] = azc_bin
+
+    monkeypatch.setattr(cli, "_maybe_scan_rewards", _fake_scan)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example")
+    monkeypatch.setenv(fresh.ENV_BASELINE, "2026-05-28T14:50:30+00:00")
+    monkeypatch.setenv(fresh.ENV_AZC_BIN, "/usr/local/bin/azc-payout-readonly")
+
+    class _FakeConn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def set_read_only(self, _value: bool) -> None:
+            return None
+
+    monkeypatch.setattr(cli.psycopg, "connect", lambda _url: _FakeConn())
+    monkeypatch.setattr(cli, "_load_selection", lambda *args, **kwargs: None)
+    cli.main(["preview", "--scan-rewards-first", "--json"])
+    assert captured["azc_bin"] == "/usr/local/bin/azc-payout-readonly"
 
 
 def test_module_has_no_sendtoaddress_literal() -> None:

@@ -492,6 +492,96 @@ def _restore_safe_scheduler_env(path: str) -> None:
     _write_scheduler_env(path, automation.build_safe_skip_scheduler_env_lines())
 
 
+def _load_address_lookup(
+    conn: psycopg.Connection,
+    *,
+    sc_node_ids: set[str],
+) -> dict[str, list[dict[str, object]]]:
+    address_lookup: dict[str, list[dict[str, object]]] = {}
+    with conn.cursor(row_factory=dict_row) as cur:
+        for sc_node_id in sorted(sc_node_ids):
+            cur.execute(
+                payout_planner.build_active_default_payout_addresses_sql(),
+                {"sc_node_id": sc_node_id},
+            )
+            address_lookup[sc_node_id] = list(cur.fetchall())
+    return address_lookup
+
+
+def _build_execution_preview(
+    conn: psycopg.Connection,
+    *,
+    config: automation.FreshCycleConfig,
+    credit_preview: credit_ledger.CreditRunPreview,
+) -> tuple[
+    payout_planner.PayoutPlanPreview,
+    production_preflight.ProductionPayoutPreflightPreview,
+    automation.FreshCycleExecutionPlan,
+]:
+    sc_node_ids = {credit.sc_node_id for credit in credit_preview.sc_node_credits}
+    address_lookup = _load_address_lookup(conn, sc_node_ids=sc_node_ids)
+    balance_payload = preflight_cli._run_getbalances(
+        azc_bin=config.azc_bin,
+        source_wallet_name=config.wallet_name,
+    )
+    wallet_balance = production_preflight.parse_wallet_balance_from_getbalances(
+        balance_payload
+    )
+    utxo_snapshot = preflight_cli._run_listunspent(
+        azc_bin=config.azc_bin,
+        source_wallet_name=config.wallet_name,
+    )
+    plan_preview = automation.build_hypothetical_plan_preview(
+        credit_preview=credit_preview,
+        wallet_name=config.wallet_name,
+        reserve_fraction=config.reserve_fraction,
+        trusted_balance_snapshot=wallet_balance.trusted,
+        address_lookup=address_lookup,
+    )
+    if not plan_preview.plan_allowed:
+        preflight_preview = automation.build_hypothetical_preflight_preview(
+            plan_preview=plan_preview,
+            wallet_name=config.wallet_name,
+            wallet_balance=wallet_balance,
+            utxo_snapshot=utxo_snapshot,
+            config=config,
+        )
+        execution_plan = automation.build_execution_plan(
+            preflight_preview=preflight_preview,
+            payout_plan_id=0,
+            source_wallet_name=config.wallet_name,
+            min_payout_refusal=plan_preview.refusal_reason,
+        )
+        if execution_plan.recommended_execution_mode != production_preflight.RECOMMENDED_EXECUTION_MODE_HALT:
+            execution_plan = automation.FreshCycleExecutionPlan(
+                recommended_execution_mode=production_preflight.RECOMMENDED_EXECUTION_MODE_HALT,
+                chunk_amount=None,
+                expected_chunk_count=None,
+                executor_confirm_phrase=None,
+                refusal_reason=plan_preview.refusal_reason or "payout plan preview refused",
+            )
+        return plan_preview, preflight_preview, execution_plan
+
+    min_payout_refusal = automation.evaluate_min_payout_refusal(
+        planned_amount_total=plan_preview.planned_amount_total,
+        min_payout_amount=config.min_payout_amount,
+    )
+    preflight_preview = automation.build_hypothetical_preflight_preview(
+        plan_preview=plan_preview,
+        wallet_name=config.wallet_name,
+        wallet_balance=wallet_balance,
+        utxo_snapshot=utxo_snapshot,
+        config=config,
+    )
+    execution_plan = automation.build_execution_plan(
+        preflight_preview=preflight_preview,
+        payout_plan_id=0,
+        source_wallet_name=config.wallet_name,
+        min_payout_refusal=min_payout_refusal,
+    )
+    return plan_preview, preflight_preview, execution_plan
+
+
 def _cmd_preview(args: argparse.Namespace, config: automation.FreshCycleConfig) -> int:
     if args.scan_rewards_first:
         _maybe_scan_rewards(wallet_name=config.wallet_name, azc_bin=config.azc_bin)
@@ -499,17 +589,15 @@ def _cmd_preview(args: argparse.Namespace, config: automation.FreshCycleConfig) 
         conn.set_read_only(True)
         selection = _load_selection(conn, config=config)
         credit_preview = None
+        preflight_preview = None
         execution_plan = None
         if selection is not None:
             credit_preview = _load_credit_preview(conn, config=config, selection=selection)
             if credit_preview.allocation_allowed:
-                execution_plan = automation.FreshCycleExecutionPlan(
-                    recommended_execution_mode=(
-                        production_preflight.RECOMMENDED_EXECUTION_MODE_HALT
-                    ),
-                    chunk_amount=None,
-                    expected_chunk_count=None,
-                    executor_confirm_phrase=None,
+                _, preflight_preview, execution_plan = _build_execution_preview(
+                    conn,
+                    config=config,
+                    credit_preview=credit_preview,
                 )
     if selection is None:
         return _emit_safe_skip("no fresh mature rewards after baseline", as_json=args.json)
@@ -517,8 +605,10 @@ def _cmd_preview(args: argparse.Namespace, config: automation.FreshCycleConfig) 
         config=config,
         selection=selection,
         credit_preview=credit_preview,
+        preflight_preview=preflight_preview,
         execution_plan=execution_plan,
     )
+    payload["azc_bin"] = config.azc_bin
     if args.json:
         _emit_json(payload)
     else:

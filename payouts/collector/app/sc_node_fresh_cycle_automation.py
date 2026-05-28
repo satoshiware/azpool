@@ -35,6 +35,9 @@ ENV_ENABLE_REAL_EXECUTION = "AZCOIN_FRESH_CYCLE_AUTOMATION_ENABLE_REAL_EXECUTION
 ENV_RUNNER_APPROVAL_PHRASE = "AZCOIN_FRESH_CYCLE_AUTOMATION_RUNNER_APPROVAL_PHRASE"
 ENV_AZC_BIN = "AZCOIN_FRESH_CYCLE_AUTOMATION_AZC_BIN"
 ENV_APPROVED_BY = "AZCOIN_FRESH_CYCLE_AUTOMATION_APPROVED_BY"
+ENV_MIN_PAYOUT_AMOUNT = "AZCOIN_FRESH_CYCLE_AUTOMATION_MIN_PAYOUT_AMOUNT"
+
+DEFAULT_AZC_BIN_READONLY = "/usr/local/bin/azc-payout-readonly"
 
 ENABLE_REAL_EXECUTION_TOKEN = "YES_ENABLE_FRESH_CYCLE_AUTOMATION"
 RUNNER_APPROVAL_PHRASE = periodic_runner.RUNNER_APPROVAL_PHRASE
@@ -76,6 +79,7 @@ class FreshCycleConfig:
     azc_bin: str
     approved_by: str
     scheduler_env_path: str
+    min_payout_amount: Decimal | None
 
 
 @dataclass(frozen=True)
@@ -98,6 +102,7 @@ class FreshCycleExecutionPlan:
     chunk_amount: Decimal | None
     expected_chunk_count: int | None
     executor_confirm_phrase: str | None
+    refusal_reason: str | None = None
 
 
 def assert_no_forbidden_automation_wallet_keywords(text: str) -> None:
@@ -133,6 +138,43 @@ def verify_runner_approval_phrase(value: str | None) -> bool:
     return str(value or "").strip() == RUNNER_APPROVAL_PHRASE
 
 
+def resolve_azc_bin(explicit: str | None = None) -> str:
+    if explicit is not None and str(explicit).strip():
+        return str(explicit).strip()
+    env_value = os.environ.get(ENV_AZC_BIN, "").strip()
+    if env_value:
+        return env_value
+    legacy_azc = os.environ.get("AZC_BIN", "").strip()
+    if legacy_azc and legacy_azc != "azc":
+        return legacy_azc
+    return DEFAULT_AZC_BIN_READONLY
+
+
+def parse_optional_min_payout_amount(value: str | None) -> Decimal | None:
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    return payout_planner.parse_decimal_amount(raw, field_name=ENV_MIN_PAYOUT_AMOUNT)
+
+
+def evaluate_min_payout_refusal(
+    *,
+    planned_amount_total: Decimal,
+    min_payout_amount: Decimal | None,
+) -> str | None:
+    if min_payout_amount is None:
+        return None
+    if planned_amount_total < min_payout_amount:
+        return (
+            "planned_amount_total "
+            f"{payout_planner._serialize_numeric(planned_amount_total)} "
+            "below "
+            f"{ENV_MIN_PAYOUT_AMOUNT}="
+            f"{payout_planner._serialize_numeric(min_payout_amount)}"
+        )
+    return None
+
+
 def load_config_from_env(
     *,
     mode_override: str | None = None,
@@ -166,10 +208,13 @@ def load_config_from_env(
         os.environ.get(ENV_ENABLE_REAL_EXECUTION)
     )
     runner_phrase = os.environ.get(ENV_RUNNER_APPROVAL_PHRASE, "").strip() or None
-    azc_bin = os.environ.get(ENV_AZC_BIN, os.environ.get("AZC_BIN", "azc")).strip() or "azc"
+    azc_bin = resolve_azc_bin()
     approved_by = os.environ.get(ENV_APPROVED_BY, "fresh-cycle-automation").strip()
     if not approved_by:
         approved_by = "fresh-cycle-automation"
+    min_payout_amount = parse_optional_min_payout_amount(
+        os.environ.get(ENV_MIN_PAYOUT_AMOUNT)
+    )
     return FreshCycleConfig(
         automation_baseline=baseline,
         mode=mode,
@@ -182,6 +227,7 @@ def load_config_from_env(
         azc_bin=azc_bin,
         approved_by=approved_by,
         scheduler_env_path=scheduler_env_path or DEFAULT_SCHEDULER_ENV_PATH,
+        min_payout_amount=min_payout_amount,
     )
 
 
@@ -362,13 +408,16 @@ def build_execution_plan(
     preflight_preview: production_preflight.ProductionPayoutPreflightPreview,
     payout_plan_id: int,
     source_wallet_name: str,
+    min_payout_refusal: str | None = None,
 ) -> FreshCycleExecutionPlan:
     policy = preflight_preview.utxo_chunking_policy
     mode = policy.recommended_execution_mode
     chunk_amount: Decimal | None = None
     expected_chunk_count: int | None = None
     executor_phrase: str | None = None
-    if mode == production_preflight.RECOMMENDED_EXECUTION_MODE_SINGLE:
+    if min_payout_refusal is not None:
+        mode = production_preflight.RECOMMENDED_EXECUTION_MODE_HALT
+    elif mode == production_preflight.RECOMMENDED_EXECUTION_MODE_SINGLE:
         executor_phrase = production_executor.build_expected_confirmation_phrase(
             payout_plan_id,
             preflight_preview.planned_amount_total,
@@ -383,12 +432,151 @@ def build_execution_plan(
             source_wallet_name=source_wallet_name,
             chunk_count=expected_chunk_count,
         )
+    refusal_reason = resolve_execution_refusal_reason(
+        preflight_preview=preflight_preview,
+        recommended_execution_mode=mode,
+        min_payout_refusal=min_payout_refusal,
+    )
     return FreshCycleExecutionPlan(
         recommended_execution_mode=mode,
         chunk_amount=chunk_amount,
         expected_chunk_count=expected_chunk_count,
         executor_confirm_phrase=executor_phrase,
+        refusal_reason=refusal_reason,
     )
+
+
+def resolve_execution_refusal_reason(
+    *,
+    preflight_preview: production_preflight.ProductionPayoutPreflightPreview,
+    recommended_execution_mode: str,
+    min_payout_refusal: str | None = None,
+) -> str | None:
+    if recommended_execution_mode != production_preflight.RECOMMENDED_EXECUTION_MODE_HALT:
+        return preflight_preview.refusal_reason
+    parts: list[str] = []
+    if min_payout_refusal:
+        parts.append(min_payout_refusal)
+    if preflight_preview.refusal_reason:
+        parts.append(preflight_preview.refusal_reason)
+    policy = preflight_preview.utxo_chunking_policy
+    if policy.refusal_reason:
+        parts.append(policy.refusal_reason)
+    if policy.utxo_evidence_note:
+        parts.append(policy.utxo_evidence_note)
+    if not parts:
+        return (
+            "recommended_execution_mode=halt without explicit preflight refusal "
+            "(check wallet balance, reserve policy, and payout plan rows)"
+        )
+    return "; ".join(parts)
+
+
+def build_hypothetical_plan_preview(
+    *,
+    credit_preview: credit_ledger.CreditRunPreview,
+    wallet_name: str,
+    reserve_fraction: Decimal,
+    trusted_balance_snapshot: Decimal,
+    address_lookup: dict[str, list[Mapping[str, Any]]],
+) -> payout_planner.PayoutPlanPreview:
+    credit_run: dict[str, Any] = {
+        "id": 0,
+        "wallet_name": wallet_name,
+        "maturity_status": credit_ledger.CREDIT_MATURITY_STATUS,
+        "status": "draft",
+        "reward_amount_total": credit_preview.reward_amount_total,
+    }
+    credits: list[dict[str, Any]] = [
+        {
+            "id": index + 1,
+            "credit_run_id": 0,
+            "sc_node_id": credit.sc_node_id,
+            "sc_node_display_name": credit.sc_node_display_name,
+            "credit_amount": credit.credit_amount,
+            "credit_status": "draft",
+        }
+        for index, credit in enumerate(credit_preview.sc_node_credits)
+    ]
+    return payout_planner.build_payout_plan_preview(
+        credit_run_id=0,
+        wallet_name=wallet_name,
+        reserve_fraction=reserve_fraction,
+        trusted_balance_snapshot=trusted_balance_snapshot,
+        credit_run=credit_run,
+        credits=credits,
+        address_lookup=address_lookup,
+        existing_draft_plan_id=None,
+    )
+
+
+def build_hypothetical_preflight_preview(
+    *,
+    plan_preview: payout_planner.PayoutPlanPreview,
+    wallet_name: str,
+    wallet_balance: production_preflight.WalletBalance,
+    utxo_snapshot: production_preflight.UtxoSnapshot,
+    config: FreshCycleConfig,
+) -> production_preflight.ProductionPayoutPreflightPreview:
+    plan_rows: list[dict[str, Any]] = [
+        {
+            "id": 0,
+            "sc_node_id": row.sc_node_id,
+            "payout_address": row.payout_address,
+            "payout_amount": row.payout_amount,
+            "row_status": plan_review.ROW_STATUS_APPROVED,
+        }
+        for row in plan_preview.rows
+    ]
+    plan: dict[str, Any] = {
+        "id": 0,
+        "status": plan_review.PLAN_STATUS_APPROVED,
+        "planned_amount_total": plan_preview.planned_amount_total,
+    }
+    return production_preflight.build_production_preflight_preview(
+        payout_plan_id=0,
+        source_wallet_name=production_preflight.normalize_source_wallet_name(wallet_name),
+        plan=plan,
+        plan_rows=plan_rows,
+        wallet_balance=wallet_balance,
+        address_lookup={
+            row.sc_node_id: [{"payout_address": row.payout_address}]
+            for row in plan_preview.rows
+        },
+        operator_override=False,
+        reserve_percent=config.reserve_fraction,
+        reserve_amount=None,
+        max_spend_percent=production_preflight.DEFAULT_MAX_SPEND_PERCENT,
+        reserve_mode=production_preflight.RESERVE_MODE_PERCENT,
+        utxo_snapshot=utxo_snapshot,
+        target_single_tx_max_amount=config.target_single_tx_max_amount,
+        fallback_chunk_amount=config.fallback_chunk_amount,
+    )
+
+
+def preflight_preview_fields(
+    preflight_preview: production_preflight.ProductionPayoutPreflightPreview,
+) -> dict[str, Any]:
+    policy = preflight_preview.utxo_chunking_policy
+    return {
+        "preflight_status": (
+            production_preflight.PREFLIGHT_STATUS_PASSED
+            if preflight_preview.execution_allowed
+            else production_preflight.PREFLIGHT_STATUS_REFUSED
+        ),
+        "execution_allowed": preflight_preview.execution_allowed,
+        "spendable_after_reserve": payout_planner._serialize_numeric(
+            preflight_preview.spendable_after_reserve
+        ),
+        "reserve_amount": payout_planner._serialize_numeric(
+            preflight_preview.reserve_amount
+        ),
+        "trusted_balance": payout_planner._serialize_numeric(
+            preflight_preview.wallet_balance.trusted
+        ),
+        "wallet_balance_source": production_preflight.WALLET_BALANCE_SOURCE_AZC_GETBALANCES,
+        "utxo_chunking_policy": production_preflight.utxo_chunking_policy_to_dict(policy),
+    }
 
 
 def build_preflight_idempotency_key(*, credit_run_id: int) -> str:
@@ -470,6 +658,7 @@ def build_preview_summary(
     config: FreshCycleConfig,
     selection: FreshCycleSelection | None,
     credit_preview: credit_ledger.CreditRunPreview | None,
+    preflight_preview: production_preflight.ProductionPayoutPreflightPreview | None = None,
     execution_plan: FreshCycleExecutionPlan | None = None,
     would_write: bool = False,
     would_execute: bool = False,
@@ -513,10 +702,12 @@ def build_preview_summary(
     )
     if credit_preview is not None:
         payload["allocation_allowed"] = credit_preview.allocation_allowed
-        payload["refusal_reason"] = credit_preview.refusal_reason
+        payload["credit_refusal_reason"] = credit_preview.refusal_reason
         payload["mapped_work_total"] = payout_planner._serialize_numeric(
             credit_preview.mapped_work_total
         )
+    if preflight_preview is not None:
+        payload.update(preflight_preview_fields(preflight_preview))
     if execution_plan is not None:
         payload["recommended_execution_mode"] = execution_plan.recommended_execution_mode
         payload["expected_chunk_count"] = execution_plan.expected_chunk_count
@@ -524,6 +715,20 @@ def build_preview_summary(
             payload["chunk_amount"] = payout_planner._serialize_numeric(
                 execution_plan.chunk_amount
             )
+        payload["refusal_reason"] = execution_plan.refusal_reason
+        if (
+            execution_plan.recommended_execution_mode
+            == production_preflight.RECOMMENDED_EXECUTION_MODE_HALT
+            and not execution_plan.refusal_reason
+        ):
+            payload["refusal_reason"] = resolve_execution_refusal_reason(
+                preflight_preview=preflight_preview,
+                recommended_execution_mode=execution_plan.recommended_execution_mode,
+            ) if preflight_preview is not None else (
+                "recommended_execution_mode=halt without preflight preview"
+            )
+    elif credit_preview is not None:
+        payload["refusal_reason"] = credit_preview.refusal_reason
     if target_ids is not None:
         payload["target_ids"] = dict(target_ids)
     return payload
