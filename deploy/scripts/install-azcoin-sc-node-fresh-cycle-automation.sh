@@ -8,6 +8,8 @@ SERVICE_DST="/etc/systemd/system/azcoin-sc-node-fresh-cycle-automation.service"
 TIMER_DST="/etc/systemd/system/azcoin-sc-node-fresh-cycle-automation.timer"
 ENV_EXAMPLE="${REPO_ROOT}/deploy/systemd/fresh-cycle-automation.env.example"
 ENV_DST="/etc/azcoin-super/pool-ledger/fresh-cycle-automation.env"
+POOL_LEDGER_DIR="/etc/azcoin-super/pool-ledger"
+SCHEDULER_ENV_DST="${POOL_LEDGER_DIR}/payout-scheduler.env"
 
 INSTALL_TIMER=0
 ON_CALENDAR="${AZCOIN_FRESH_CYCLE_AUTOMATION_ON_CALENDAR:-*:0/30}"
@@ -50,10 +52,24 @@ if [[ "${EUID}" -ne 0 ]]; then
   exit 1
 fi
 
-install -d -o root -g root -m 0750 /etc/azcoin-super/pool-ledger
+install -d -o root -g azledger -m 0750 "${POOL_LEDGER_DIR}"
+# Ensure azledger can traverse pool-ledger for EnvironmentFile reads and scheduler env writes.
+chown root:azledger "${POOL_LEDGER_DIR}"
+chmod 0750 "${POOL_LEDGER_DIR}"
+
 if [[ -f "${ENV_EXAMPLE}" && ! -f "${ENV_DST}" ]]; then
   install -m 0640 -o root -g azledger "${ENV_EXAMPLE}" "${ENV_DST}"
   echo "ENV_EXAMPLE_OK path=${ENV_DST}"
+elif [[ -f "${ENV_DST}" ]]; then
+  chown root:azledger "${ENV_DST}"
+  chmod 0640 "${ENV_DST}"
+  echo "ENV_PERMS_OK path=${ENV_DST} (root:azledger 0640)"
+fi
+
+if [[ -f "${SCHEDULER_ENV_DST}" ]]; then
+  chown root:azledger "${SCHEDULER_ENV_DST}"
+  chmod 0660 "${SCHEDULER_ENV_DST}"
+  echo "SCHEDULER_ENV_PERMS_OK path=${SCHEDULER_ENV_DST} (root:azledger 0660)"
 fi
 
 install -m 0644 -o root -g root "${SERVICE_SRC}" "${SERVICE_DST}"

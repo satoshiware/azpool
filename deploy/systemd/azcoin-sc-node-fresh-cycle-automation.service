@@ -11,9 +11,10 @@ WorkingDirectory=/opt/azcoin-super/src/azpool
 Environment=PYTHONPATH=/opt/azcoin-super/src/azpool
 EnvironmentFile=-/etc/azcoin-super/pool-ledger/collector.env
 EnvironmentFile=-/etc/azcoin-super/pool-ledger/fresh-cycle-automation.env
+# systemd loads EnvironmentFile as root before User=; never shell-source env files (pool-ledger dir is root:azledger 0750).
 # Default mode write-target from fresh-cycle-automation.env (not execute-live).
 SuccessExitStatus=0
-ExecStart=/bin/bash -c 'set -a; source /etc/azcoin-super/pool-ledger/fresh-cycle-automation.env; set +a; exec /opt/azcoin-super/src/azpool/.venv/bin/python /opt/azcoin-super/src/azpool/payouts/scripts/sc_node_fresh_cycle_automation.py ${AZCOIN_FRESH_CYCLE_AUTOMATION_MODE:-write-target}'
+ExecStart=/bin/bash -c 'exec /opt/azcoin-super/src/azpool/.venv/bin/python /opt/azcoin-super/src/azpool/payouts/scripts/sc_node_fresh_cycle_automation.py "${AZCOIN_FRESH_CYCLE_AUTOMATION_MODE:-write-target}"'
 StandardOutput=journal
 StandardError=journal
 

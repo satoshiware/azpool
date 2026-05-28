@@ -221,7 +221,7 @@ def _write_credit_run(
                 "mapped_work_total": credit_preview.mapped_work_total,
                 "unmapped_work_total": credit_preview.unmapped_work.work_delta_total,
                 "status": "draft",
-                "notes": "fresh-cycle-automation",
+                "notes": automation.FRESH_CYCLE_AUTOMATION_NOTES,
             },
         )
         run_row = cur.fetchone()
@@ -301,7 +301,7 @@ def _write_payout_plan(
                 "max_spendable_amount": preview.max_spendable_amount,
                 "planned_amount_total": preview.planned_amount_total,
                 "row_count": preview.row_count,
-                "notes": "fresh-cycle-automation",
+                "notes": automation.FRESH_CYCLE_AUTOMATION_NOTES,
                 "payout_correction_id": preview.payout_correction_id,
             },
         )
@@ -312,16 +312,10 @@ def _write_payout_plan(
         for row in preview.rows:
             cur.execute(
                 payout_planner.build_insert_payout_plan_row_sql(),
-                {
-                    "payout_plan_id": payout_plan_id,
-                    "credit_id": row.credit_id,
-                    "sc_node_id": row.sc_node_id,
-                    "payout_address": row.payout_address,
-                    "gross_credit_amount": row.gross_credit_amount,
-                    "correction_amount": row.correction_amount,
-                    "payout_amount": row.payout_amount,
-                    "status": "draft",
-                },
+                automation.build_payout_plan_row_insert_params(
+                    payout_plan_id=payout_plan_id,
+                    row=row,
+                ),
             )
     return payout_plan_id
 
@@ -455,7 +449,7 @@ def _record_preflight(
                 "operator_override": preview.operator_override,
                 "wallet_balance_source": production_preflight.WALLET_BALANCE_SOURCE_AZC_GETBALANCES,
                 "idempotency_key": idempotency_key,
-                "notes": "fresh-cycle-automation",
+                "notes": automation.FRESH_CYCLE_AUTOMATION_NOTES,
             },
         )
         header = cur.fetchone()
@@ -479,17 +473,76 @@ def _record_preflight(
 
 
 def _write_scheduler_env(path: str, lines: list[str]) -> None:
-    content = automation.render_scheduler_env_content(lines)
-    target = Path(path)
-    target.write_text(content, encoding="utf-8")
-    try:
-        os.chmod(target, 0o640)
-    except OSError:
-        pass
+    automation.write_scheduler_env_file(path, lines)
 
 
 def _restore_safe_scheduler_env(path: str) -> None:
-    _write_scheduler_env(path, automation.build_safe_skip_scheduler_env_lines())
+    try:
+        _write_scheduler_env(path, automation.build_safe_skip_scheduler_env_lines())
+    except OSError as exc:
+        print(
+            f"warning: failed to restore safe scheduler env at {path}: {exc}",
+            file=sys.stderr,
+        )
+        raise
+
+
+def _lookup_fresh_cycle_artifacts(
+    conn: psycopg.Connection,
+    *,
+    config: automation.FreshCycleConfig,
+    selection: automation.FreshCycleSelection,
+) -> automation.FreshCycleArtifactLookup:
+    with conn.cursor(row_factory=dict_row) as cur:
+        cur.execute(
+            automation.build_fresh_cycle_credit_run_for_coverage_sql(),
+            {
+                "wallet_name": config.wallet_name,
+                "coverage_start": selection.coverage_start,
+                "coverage_end": selection.coverage_end,
+                "notes": automation.FRESH_CYCLE_AUTOMATION_NOTES,
+            },
+        )
+        credit_row = cur.fetchone()
+        if credit_row is None:
+            return automation.FreshCycleArtifactLookup(None, None, None)
+        credit_run_id = int(credit_row["id"])
+        cur.execute(
+            automation.build_fresh_cycle_payout_plan_for_credit_run_sql(),
+            {"credit_run_id": credit_run_id},
+        )
+        plan_row = cur.fetchone()
+        if plan_row is None:
+            resume_note = (
+                f"fresh-cycle credit_run_id={credit_run_id} already exists for coverage "
+                f"{automation._serialize_datetime(selection.coverage_start)}.."
+                f"{automation._serialize_datetime(selection.coverage_end)} without payout plan; "
+                "resuming payout plan write (no duplicate credit run)"
+            )
+            return automation.FreshCycleArtifactLookup(
+                credit_run_id,
+                None,
+                None,
+                resume_note=resume_note,
+            )
+        payout_plan_id = int(plan_row["id"])
+        idempotency_key = automation.build_preflight_idempotency_key(
+            credit_run_id=credit_run_id
+        )
+        cur.execute(
+            production_preflight.build_production_preflight_by_idempotency_sql(),
+            {
+                "payout_plan_id": payout_plan_id,
+                "idempotency_key": idempotency_key,
+            },
+        )
+        preflight_row = cur.fetchone()
+        preflight_id = int(preflight_row["id"]) if preflight_row else None
+        return automation.FreshCycleArtifactLookup(
+            credit_run_id,
+            payout_plan_id,
+            preflight_id,
+        )
 
 
 def _load_address_lookup(
@@ -621,16 +674,44 @@ def _write_artifacts(
     *,
     config: automation.FreshCycleConfig,
     selection: automation.FreshCycleSelection,
-) -> tuple[int, int, int, production_preflight.ProductionPayoutPreflightPreview]:
+) -> tuple[
+    int,
+    int,
+    int,
+    production_preflight.ProductionPayoutPreflightPreview,
+    str | None,
+]:
+    lookup = _lookup_fresh_cycle_artifacts(conn, config=config, selection=selection)
+    resume_note = lookup.resume_note
     credit_preview = _load_credit_preview(conn, config=config, selection=selection)
     if not credit_preview.allocation_allowed:
         raise RuntimeError(credit_preview.refusal_reason or "credit allocation refused")
-    credit_run_id = _write_credit_run(
-        conn,
-        config=config,
-        selection=selection,
-        credit_preview=credit_preview,
-    )
+    if lookup.is_complete:
+        assert lookup.credit_run_id is not None
+        assert lookup.payout_plan_id is not None
+        assert lookup.production_preflight_id is not None
+        _, preflight_preview = _record_preflight(
+            conn,
+            payout_plan_id=lookup.payout_plan_id,
+            config=config,
+            credit_run_id=lookup.credit_run_id,
+        )
+        return (
+            lookup.credit_run_id,
+            lookup.payout_plan_id,
+            lookup.production_preflight_id,
+            preflight_preview,
+            resume_note,
+        )
+    if lookup.credit_run_id is not None:
+        credit_run_id = lookup.credit_run_id
+    else:
+        credit_run_id = _write_credit_run(
+            conn,
+            config=config,
+            selection=selection,
+            credit_preview=credit_preview,
+        )
     trusted_balance = preflight_cli._run_getbalances(
         azc_bin=config.azc_bin,
         source_wallet_name=config.wallet_name,
@@ -638,20 +719,23 @@ def _write_artifacts(
     wallet_balance = production_preflight.parse_wallet_balance_from_getbalances(
         trusted_balance
     )
-    payout_plan_id = _write_payout_plan(
-        conn,
-        credit_run_id=credit_run_id,
-        config=config,
-        trusted_balance=wallet_balance.trusted,
-    )
-    _approve_plan(conn, payout_plan_id=payout_plan_id, approved_by=config.approved_by)
+    if lookup.payout_plan_id is not None:
+        payout_plan_id = lookup.payout_plan_id
+    else:
+        payout_plan_id = _write_payout_plan(
+            conn,
+            credit_run_id=credit_run_id,
+            config=config,
+            trusted_balance=wallet_balance.trusted,
+        )
+        _approve_plan(conn, payout_plan_id=payout_plan_id, approved_by=config.approved_by)
     preflight_id, preflight_preview = _record_preflight(
         conn,
         payout_plan_id=payout_plan_id,
         config=config,
         credit_run_id=credit_run_id,
     )
-    return credit_run_id, payout_plan_id, preflight_id, preflight_preview
+    return credit_run_id, payout_plan_id, preflight_id, preflight_preview, resume_note
 
 
 def _cmd_write_target(args: argparse.Namespace, config: automation.FreshCycleConfig) -> int:
@@ -661,7 +745,7 @@ def _cmd_write_target(args: argparse.Namespace, config: automation.FreshCycleCon
         selection = _load_selection(conn, config=config)
         if selection is None:
             return _emit_safe_skip("no fresh mature rewards after baseline", as_json=args.json)
-        credit_run_id, payout_plan_id, preflight_id, preflight_preview = _write_artifacts(
+        credit_run_id, payout_plan_id, preflight_id, preflight_preview, resume_note = _write_artifacts(
             conn,
             config=config,
             selection=selection,
@@ -695,6 +779,8 @@ def _cmd_write_target(args: argparse.Namespace, config: automation.FreshCycleCon
         },
     )
     payload["scheduler_env_path"] = args.scheduler_env_path
+    if resume_note:
+        payload["artifact_resume_note"] = resume_note
     if args.json:
         _emit_json(payload)
     else:
@@ -717,7 +803,7 @@ def _cmd_execute_live(args: argparse.Namespace, config: automation.FreshCycleCon
                     "no fresh mature rewards after baseline",
                     as_json=args.json,
                 )
-            credit_run_id, payout_plan_id, preflight_id, preflight_preview = _write_artifacts(
+            credit_run_id, payout_plan_id, preflight_id, preflight_preview, _resume_note = _write_artifacts(
                 conn,
                 config=config,
                 selection=selection,
@@ -797,8 +883,14 @@ def _cmd_execute_live(args: argparse.Namespace, config: automation.FreshCycleCon
         if args.json:
             _emit_json(execution_payload)
         return 0 if completed.returncode == 0 else completed.returncode
+    except Exception as exc:
+        print(f"execute-live failed: {exc}", file=sys.stderr)
+        return 1
     finally:
-        _restore_safe_scheduler_env(args.scheduler_env_path)
+        try:
+            _restore_safe_scheduler_env(args.scheduler_env_path)
+        except OSError:
+            pass
 
 
 def _cmd_confirm_sent(args: argparse.Namespace) -> int:

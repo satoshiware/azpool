@@ -105,6 +105,14 @@ sudo systemctl enable --now azcoin-sc-node-fresh-cycle-automation.timer
 systemctl status azcoin-sc-node-fresh-cycle-automation.timer --no-pager
 ```
 
+### Permissions model
+
+- `/etc/azcoin-super/pool-ledger` is `root:azledger 0750` so the `azledger` service user can traverse the directory.
+- `fresh-cycle-automation.env` is `root:azledger 0640` (read-only for service).
+- `payout-scheduler.env` is `root:azledger 0660` so write-target/execute-live can update scheduler targets atomically.
+- The unit uses systemd `EnvironmentFile=` (loaded as root before `User=azledger`); it does **not** shell-source env files.
+- Re-run the install script after upgrades to normalize directory/file ownership if a prior install used `root:root 0750` on the pool-ledger directory.
+
 Default timer schedule: `*:0/30` (every 30 minutes). Empty `OnCalendar` is rejected at install time.
 
 Service runs `write-target` by default (from `fresh-cycle-automation.env`).
@@ -142,3 +150,4 @@ sudo systemctl daemon-reload
 - No new wallet send primitives in automation code
 - execute-live delegates to existing manual periodic payout runner with cadence override reason `fresh-cycle-automation`
 - Secrets/phrases redacted in log helper output
+- write-target idempotency: reuses existing fresh-cycle credit run / plan / preflight for the same coverage window instead of duplicating rows; resumes payout plan write when a credit run exists without a plan

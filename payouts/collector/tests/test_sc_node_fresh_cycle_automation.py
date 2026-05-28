@@ -13,6 +13,7 @@ AZPOOL_ROOT = Path(__file__).resolve().parents[3]
 if str(AZPOOL_ROOT) not in sys.path:
     sys.path.insert(0, str(AZPOOL_ROOT))
 
+from payouts.collector.app import sc_node_credit_ledger as credit_ledger
 from payouts.collector.app import sc_node_fresh_cycle_automation as fresh
 from payouts.collector.app import sc_node_payout_production_preflight as production_preflight
 from payouts.collector.app import sc_node_payout_scheduler as scheduler
@@ -524,6 +525,338 @@ def test_scan_rewards_uses_configured_azc_bin(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(cli, "_load_selection", lambda *args, **kwargs: None)
     cli.main(["preview", "--scan-rewards-first", "--json"])
     assert captured["azc_bin"] == "/usr/local/bin/azc-payout-readonly"
+
+
+def test_payout_plan_row_insert_params_match_planner_schema() -> None:
+    from payouts.collector.app import sc_node_payout_planner as planner
+
+    row = planner.PayoutPlanRowPreview(
+        credit_id=1,
+        sc_node_id="node-1",
+        sc_node_display_name="SC Node 1",
+        payout_address="azc1addr",
+        gross_credit_amount=Decimal("1.875000000000"),
+        correction_amount=Decimal("0"),
+        payout_amount=Decimal("1.875000000000"),
+    )
+    params = fresh.build_payout_plan_row_insert_params(payout_plan_id=5, row=row)
+    required = fresh.required_payout_plan_row_insert_param_names()
+    assert required == set(params.keys())
+    assert params["row_status"] == "draft"
+    assert params["sc_node_display_name"] == "SC Node 1"
+    assert "status" not in params
+
+
+def test_install_script_sets_pool_ledger_azledger_permissions() -> None:
+    text = (
+        AZPOOL_ROOT / "deploy/scripts/install-azcoin-sc-node-fresh-cycle-automation.sh"
+    ).read_text(encoding="utf-8")
+    assert "g azledger" in text
+    assert "0660" in text
+    assert 'POOL_LEDGER_DIR="/etc/azcoin-super/pool-ledger"' in text
+
+
+def test_service_unit_uses_environmentfile_not_shell_source() -> None:
+    text = (
+        AZPOOL_ROOT / "deploy/systemd/azcoin-sc-node-fresh-cycle-automation.service"
+    ).read_text(encoding="utf-8")
+    assert "source /etc/azcoin-super/pool-ledger/fresh-cycle-automation.env" not in text
+    assert "EnvironmentFile=-/etc/azcoin-super/pool-ledger/fresh-cycle-automation.env" in text
+
+
+def test_write_scheduler_env_file_writes_atomically_with_group_mode(tmp_path: Path) -> None:
+    target = tmp_path / "payout-scheduler.env"
+    fresh.write_scheduler_env_file(
+        str(target),
+        fresh.build_safe_skip_scheduler_env_lines(),
+    )
+    content = target.read_text(encoding="utf-8")
+    assert "SC_NODE_PAYOUT_SCHEDULER_MODE=report-only" in content
+    assert (target.stat().st_mode & 0o777) == fresh.DEFAULT_SCHEDULER_ENV_FILE_MODE
+
+
+def test_partial_artifact_refusal_explains_resume() -> None:
+    config = fresh.FreshCycleConfig(
+        automation_baseline=_BASELINE,
+        mode=fresh.MODE_WRITE_TARGET,
+        wallet_name="wallet",
+        reserve_fraction=Decimal("0.50"),
+        target_single_tx_max_amount=Decimal("500"),
+        fallback_chunk_amount=Decimal("25"),
+        enable_real_execution=False,
+        runner_approval_phrase=None,
+        azc_bin="azc",
+        approved_by="test",
+        scheduler_env_path="/tmp/payout-scheduler.env",
+        min_payout_amount=None,
+    )
+    selection = fresh.build_fresh_cycle_selection(
+        config=config,
+        unlinked_events=[_event(2, "1.875000000000", _PRIOR_END + timedelta(hours=1))],
+        latest_credit_run_coverage_end=_PRIOR_END,
+        exclude_coverage_start_boundary=False,
+    )
+    assert selection is not None
+    lookup = fresh.FreshCycleArtifactLookup(6, None, None)
+    msg = fresh.evaluate_partial_artifact_refusal(lookup=lookup, selection=selection)
+    assert msg is not None
+    assert "credit_run_id=6" in msg
+    assert "without payout plan" in msg
+
+
+def test_write_artifacts_resumes_partial_credit_run_without_duplicate_insert(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from payouts.scripts import sc_node_fresh_cycle_automation as cli
+
+    config = fresh.FreshCycleConfig(
+        automation_baseline=_BASELINE,
+        mode=fresh.MODE_WRITE_TARGET,
+        wallet_name="wallet",
+        reserve_fraction=Decimal("0.50"),
+        target_single_tx_max_amount=Decimal("500"),
+        fallback_chunk_amount=Decimal("25"),
+        enable_real_execution=False,
+        runner_approval_phrase=None,
+        azc_bin="azc",
+        approved_by="test",
+        scheduler_env_path="/tmp/payout-scheduler.env",
+        min_payout_amount=None,
+    )
+    selection = fresh.build_fresh_cycle_selection(
+        config=config,
+        unlinked_events=[_event(2, "1.875000000000", _PRIOR_END + timedelta(hours=1))],
+        latest_credit_run_coverage_end=_PRIOR_END,
+        exclude_coverage_start_boundary=False,
+    )
+    assert selection is not None
+
+    write_plan_calls = {"count": 0}
+
+    monkeypatch.setattr(
+        cli,
+        "_lookup_fresh_cycle_artifacts",
+        lambda *args, **kwargs: fresh.FreshCycleArtifactLookup(
+            6,
+            None,
+            None,
+            resume_note="resume plan",
+        ),
+    )
+    monkeypatch.setattr(
+        cli,
+        "_load_credit_preview",
+        lambda *args, **kwargs: credit_ledger.CreditRunPreview(
+            wallet_name="wallet",
+            coverage=fresh.build_credit_coverage(selection),
+            reward_event_count=1,
+            reward_amount_total=Decimal("1.875000000000"),
+            mapped_work_total=Decimal("1"),
+            sc_node_credits=(),
+            unmapped_work=credit_ledger.UnmappedWorkPreview(
+                work_delta_total=Decimal("0"),
+                accepted_delta_total=Decimal("0"),
+                delta_rows=0,
+            ),
+            allocation_allowed=True,
+            refusal_reason=None,
+        ),
+    )
+    monkeypatch.setattr(cli, "_write_credit_run", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("duplicate credit run")))
+    monkeypatch.setattr(
+        cli.preflight_cli,
+        "_run_getbalances",
+        lambda **kwargs: {"mine": {"trusted": "1000", "immature": "0"}},
+    )
+    monkeypatch.setattr(cli.preflight_cli, "_run_listunspent", lambda **kwargs: [])
+    def _fake_write_plan(*args: object, **kwargs: object) -> int:
+        write_plan_calls["count"] += 1
+        return 7
+
+    monkeypatch.setattr(cli, "_write_payout_plan", _fake_write_plan)
+    monkeypatch.setattr(cli, "_approve_plan", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        cli,
+        "_record_preflight",
+        lambda *args, **kwargs: (
+            8,
+            production_preflight.ProductionPayoutPreflightPreview(
+                payout_plan_id=7,
+                source_wallet_name="wallet",
+                execution_allowed=True,
+                refusal_reason=None,
+                wallet_balance=production_preflight.WalletBalance(
+                    trusted=Decimal("1000"),
+                    immature=Decimal("0"),
+                ),
+                planned_amount_total=Decimal("1.875000000000"),
+                reserve_mode=production_preflight.RESERVE_MODE_PERCENT,
+                reserve_percent=Decimal("0.5"),
+                reserve_amount=Decimal("500"),
+                spendable_after_reserve=Decimal("500"),
+                max_spend_percent=Decimal("0.5"),
+                max_spend_allowed=Decimal("500"),
+                operator_override=False,
+                row_count=1,
+                rows=(),
+                utxo_chunking_policy=production_preflight.UtxoChunkingPolicy(
+                    spendable_balance=Decimal("1000"),
+                    planned_payout_amount=Decimal("1.875000000000"),
+                    reserve_requirement=Decimal("500"),
+                    available_after_reserve=Decimal("500"),
+                    utxo_count=1,
+                    max_observed_utxo_amount=Decimal("2"),
+                    target_single_tx_max_amount=Decimal("500"),
+                    fallback_chunk_amount=Decimal("25"),
+                    recommended_chunk_size=Decimal("1.875000000000"),
+                    estimated_chunk_count=1,
+                    fragmentation_risk=production_preflight.FRAGMENTATION_RISK_LOW,
+                    recommended_execution_mode=production_preflight.RECOMMENDED_EXECUTION_MODE_SINGLE,
+                    refusal_reason=None,
+                    wallet_utxo_source=production_preflight.WALLET_UTXO_SOURCE_AZC_LISTUNSPENT,
+                    utxo_evidence_note=None,
+                ),
+            ),
+        ),
+    )
+
+    credit_run_id, payout_plan_id, preflight_id, _, resume_note = cli._write_artifacts(
+        MagicMock(),
+        config=config,
+        selection=selection,
+    )
+    assert credit_run_id == 6
+    assert payout_plan_id == 7
+    assert preflight_id == 8
+    assert resume_note == "resume plan"
+    assert write_plan_calls["count"] == 1
+
+
+def test_write_target_writes_scheduler_env_after_db_commit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from payouts.scripts import sc_node_fresh_cycle_automation as cli
+
+    scheduler_path = tmp_path / "payout-scheduler.env"
+    config = fresh.FreshCycleConfig(
+        automation_baseline=_BASELINE,
+        mode=fresh.MODE_WRITE_TARGET,
+        wallet_name="wallet",
+        reserve_fraction=Decimal("0.50"),
+        target_single_tx_max_amount=Decimal("500"),
+        fallback_chunk_amount=Decimal("25"),
+        enable_real_execution=False,
+        runner_approval_phrase=None,
+        azc_bin="azc",
+        approved_by="test",
+        scheduler_env_path=str(scheduler_path),
+        min_payout_amount=None,
+    )
+    selection = fresh.build_fresh_cycle_selection(
+        config=config,
+        unlinked_events=[_event(2, "1.875000000000", _PRIOR_END + timedelta(hours=1))],
+        latest_credit_run_coverage_end=_PRIOR_END,
+        exclude_coverage_start_boundary=False,
+    )
+    assert selection is not None
+    preview = production_preflight.ProductionPayoutPreflightPreview(
+        payout_plan_id=7,
+        source_wallet_name="wallet",
+        execution_allowed=True,
+        refusal_reason=None,
+        wallet_balance=production_preflight.WalletBalance(
+            trusted=Decimal("1000"),
+            immature=Decimal("0"),
+        ),
+        planned_amount_total=Decimal("1.875000000000"),
+        reserve_mode=production_preflight.RESERVE_MODE_PERCENT,
+        reserve_percent=Decimal("0.5"),
+        reserve_amount=Decimal("500"),
+        spendable_after_reserve=Decimal("500"),
+        max_spend_percent=Decimal("0.5"),
+        max_spend_allowed=Decimal("500"),
+        operator_override=False,
+        row_count=1,
+        rows=(),
+        utxo_chunking_policy=production_preflight.UtxoChunkingPolicy(
+            spendable_balance=Decimal("1000"),
+            planned_payout_amount=Decimal("1.875000000000"),
+            reserve_requirement=Decimal("500"),
+            available_after_reserve=Decimal("500"),
+            utxo_count=1,
+            max_observed_utxo_amount=Decimal("2"),
+            target_single_tx_max_amount=Decimal("500"),
+            fallback_chunk_amount=Decimal("25"),
+            recommended_chunk_size=Decimal("1.875000000000"),
+            estimated_chunk_count=1,
+            fragmentation_risk=production_preflight.FRAGMENTATION_RISK_LOW,
+            recommended_execution_mode=production_preflight.RECOMMENDED_EXECUTION_MODE_SINGLE,
+            refusal_reason=None,
+            wallet_utxo_source=production_preflight.WALLET_UTXO_SOURCE_AZC_LISTUNSPENT,
+            utxo_evidence_note=None,
+        ),
+    )
+
+    class _FakeConn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def commit(self) -> None:
+            return None
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example")
+    monkeypatch.setenv(fresh.ENV_BASELINE, "2026-05-28T14:50:30+00:00")
+    monkeypatch.setattr(cli.psycopg, "connect", lambda _url: _FakeConn())
+    monkeypatch.setattr(cli, "_load_selection", lambda *args, **kwargs: selection)
+    monkeypatch.setattr(
+        cli,
+        "_write_artifacts",
+        lambda *args, **kwargs: (6, 7, 8, preview, None),
+    )
+    assert cli.main(["--scheduler-env-path", str(scheduler_path), "write-target", "--json"]) == 0
+    text = scheduler_path.read_text(encoding="utf-8")
+    assert "SC_NODE_PAYOUT_SCHEDULER_PAYOUT_PLAN_ID=7" in text
+    assert "SC_NODE_PAYOUT_SCHEDULER_PRODUCTION_PREFLIGHT_ID=8" in text
+
+
+def test_execute_live_finally_attempts_scheduler_restore_on_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from payouts.scripts import sc_node_fresh_cycle_automation as cli
+
+    scheduler_path = tmp_path / "payout-scheduler.env"
+    scheduler_path.write_text("placeholder\n", encoding="utf-8")
+    restore_calls: list[str] = []
+
+    def _fake_restore(path: str) -> None:
+        restore_calls.append(path)
+        fresh.write_scheduler_env_file(path, fresh.build_safe_skip_scheduler_env_lines())
+
+    monkeypatch.setattr(cli, "_restore_safe_scheduler_env", _fake_restore)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example")
+    monkeypatch.setenv(fresh.ENV_BASELINE, "2026-05-28T14:50:30+00:00")
+    monkeypatch.setenv(fresh.ENV_ENABLE_REAL_EXECUTION, fresh.ENABLE_REAL_EXECUTION_TOKEN)
+    monkeypatch.setenv(fresh.ENV_RUNNER_APPROVAL_PHRASE, fresh.RUNNER_APPROVAL_PHRASE)
+
+    def _boom_connect(_url: str) -> None:
+        raise RuntimeError("db unavailable")
+
+    monkeypatch.setattr(cli.psycopg, "connect", _boom_connect)
+    rc = cli.main(
+        [
+            "--scheduler-env-path",
+            str(scheduler_path),
+            "execute-live",
+        ]
+    )
+    assert rc != 0
+    assert restore_calls == [str(scheduler_path)]
+    assert "SC_NODE_PAYOUT_SCHEDULER_MODE=report-only" in scheduler_path.read_text(encoding="utf-8")
 
 
 def test_module_has_no_sendtoaddress_literal() -> None:

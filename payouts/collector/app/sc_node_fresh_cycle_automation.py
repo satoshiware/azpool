@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import os
 import re
+import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from pathlib import Path
 from typing import Any, Mapping
 
 from payouts.collector.app import sc_node_credit_ledger as credit_ledger
@@ -18,6 +20,8 @@ from payouts.collector.app import sc_node_payout_scheduler as payout_scheduler
 
 DEFAULT_AUTOMATION_BASELINE = "2026-05-28T14:50:30+00:00"
 DEFAULT_SCHEDULER_ENV_PATH = "/etc/azcoin-super/pool-ledger/payout-scheduler.env"
+DEFAULT_SCHEDULER_ENV_FILE_MODE = 0o660
+FRESH_CYCLE_AUTOMATION_NOTES = "fresh-cycle-automation"
 
 MODE_PREVIEW = "preview"
 MODE_WRITE_TARGET = "write-target"
@@ -103,6 +107,26 @@ class FreshCycleExecutionPlan:
     expected_chunk_count: int | None
     executor_confirm_phrase: str | None
     refusal_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class FreshCycleArtifactLookup:
+    credit_run_id: int | None
+    payout_plan_id: int | None
+    production_preflight_id: int | None
+    resume_note: str | None = None
+
+    @property
+    def is_complete(self) -> bool:
+        return (
+            self.credit_run_id is not None
+            and self.payout_plan_id is not None
+            and self.production_preflight_id is not None
+        )
+
+    @property
+    def has_partial_credit_run(self) -> bool:
+        return self.credit_run_id is not None and self.payout_plan_id is None
 
 
 def assert_no_forbidden_automation_wallet_keywords(text: str) -> None:
@@ -239,6 +263,82 @@ WHERE wallet_name = %(wallet_name)s
 """.strip()
     credit_ledger._assert_readonly_sql(sql)
     return sql
+
+
+def build_fresh_cycle_credit_run_for_coverage_sql() -> str:
+    sql = """
+SELECT id, status
+FROM sc_node_reward_credit_runs
+WHERE wallet_name = %(wallet_name)s
+  AND coverage_start = %(coverage_start)s
+  AND coverage_end = %(coverage_end)s
+  AND notes = %(notes)s
+ORDER BY id DESC
+LIMIT 1
+""".strip()
+    credit_ledger._assert_readonly_sql(sql)
+    return sql
+
+
+def build_fresh_cycle_payout_plan_for_credit_run_sql() -> str:
+    sql = """
+SELECT id, status
+FROM sc_node_payout_plans
+WHERE credit_run_id = %(credit_run_id)s
+ORDER BY id DESC
+LIMIT 1
+""".strip()
+    credit_ledger._assert_readonly_sql(sql)
+    return sql
+
+
+def build_payout_plan_row_insert_params(
+    *,
+    payout_plan_id: int,
+    row: payout_planner.PayoutPlanRowPreview,
+    row_status: str = "draft",
+) -> dict[str, Any]:
+    return {
+        "payout_plan_id": payout_plan_id,
+        "credit_id": row.credit_id,
+        "sc_node_id": row.sc_node_id,
+        "sc_node_display_name": row.sc_node_display_name,
+        "payout_address": row.payout_address,
+        "gross_credit_amount": row.gross_credit_amount,
+        "correction_amount": row.correction_amount,
+        "payout_amount": row.payout_amount,
+        "row_status": row_status,
+    }
+
+
+def required_payout_plan_row_insert_param_names() -> frozenset[str]:
+    return frozenset(build_payout_plan_row_insert_params(
+        payout_plan_id=0,
+        row=payout_planner.PayoutPlanRowPreview(
+            credit_id=0,
+            sc_node_id="node",
+            sc_node_display_name="Node",
+            payout_address="addr",
+            gross_credit_amount=Decimal("0"),
+            correction_amount=Decimal("0"),
+            payout_amount=Decimal("0"),
+        ),
+    ).keys())
+
+
+def evaluate_partial_artifact_refusal(
+    *,
+    lookup: FreshCycleArtifactLookup,
+    selection: FreshCycleSelection,
+) -> str | None:
+    if not lookup.has_partial_credit_run:
+        return None
+    return (
+        f"fresh-cycle credit_run_id={lookup.credit_run_id} already exists for coverage "
+        f"{_serialize_datetime(selection.coverage_start)}.."
+        f"{_serialize_datetime(selection.coverage_end)} without payout plan; "
+        "resuming payout plan write (no duplicate credit run)"
+    )
 
 
 def build_unlinked_mature_reward_events_sql() -> str:
@@ -635,6 +735,31 @@ def build_safe_skip_scheduler_env_lines() -> list[str]:
 
 def render_scheduler_env_content(lines: list[str]) -> str:
     return "\n".join(lines) + "\n"
+
+
+def write_scheduler_env_file(
+    path: str,
+    lines: list[str],
+    *,
+    file_mode: int = DEFAULT_SCHEDULER_ENV_FILE_MODE,
+) -> None:
+    content = render_scheduler_env_content(lines)
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(
+        prefix=f".{target.name}.",
+        suffix=".tmp",
+        dir=str(target.parent),
+    )
+    tmp = Path(tmp_path)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(content)
+        os.chmod(tmp, file_mode)
+        os.replace(tmp, target)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
 
 
 def evaluate_execute_live_refusal(config: FreshCycleConfig) -> str | None:
