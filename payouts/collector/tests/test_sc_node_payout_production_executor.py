@@ -294,8 +294,25 @@ def test_sendtoaddress_argv_is_explicit_list() -> None:
         "-rpcwallet=wallet",
         "sendtoaddress",
         "az1qxgr54ykergmzp7h7fg37lgtc0ccdce355xppqv",
-        "121.875000000000",
+        "121.87500000",
     ]
+
+
+def test_format_wallet_amount_down_truncates_to_8_decimals() -> None:
+    assert executor.format_wallet_amount_down("1.004928799583") == "1.00492879"
+    assert executor.format_wallet_amount_down("0.870071200416") == "0.87007120"
+    assert executor.format_wallet_amount_down(Decimal("121.875")) == "121.87500000"
+
+
+def test_sendtoaddress_argv_never_sends_raw_12_decimal_amounts() -> None:
+    argv = executor.build_sendtoaddress_argv(
+        azc_bin="/tmp/azc",
+        source_wallet_name=_SOURCE_WALLET,
+        payout_address="az1qxgr54ykergmzp7h7fg37lgtc0ccdce355xppqv",
+        payout_amount=Decimal("1.004928799583"),
+    )
+    assert argv[-1] == "1.00492879"
+    assert "1.004928799583" not in argv
 
 
 def test_script_preview_has_no_sendtoaddress() -> None:
@@ -470,3 +487,397 @@ def test_mark_confirmed_script_block_uses_gettransaction_not_sendtoaddress() -> 
     assert "gettransaction" in mark_block
     assert "sendtoaddress" not in mark_block
     assert "walletpassphrase" not in mark_block
+
+
+# ---------------------------------------------------------------------------
+# execute-real multi-row behavior (script-level, mocked DB + mocked wallet).
+# These tests never touch a real wallet RPC or a real database.
+# ---------------------------------------------------------------------------
+
+import json
+from types import SimpleNamespace
+
+from payouts.collector.app import payout_addresses
+from payouts.scripts import sc_node_payout_production_executor as executor_cli
+
+
+_MR_PLAN_ID = 14
+_MR_PREFLIGHT_ID = 10
+_MR_EXECUTION_ID = 50
+_MR_PLANNED_TOTAL = Decimal("1.874999999999")
+_MR_CONFIRM = "SEND 1.874999999999 FROM wallet FOR PLAN 14"
+_MR_IDEMPOTENCY = "unit-test-plan-14-multirow"
+_MR_SC2_ADDRESS = "az1qxgr54ykergmzp7h7fg37lgtc0ccdce355xppqv"
+_MR_SC3_ADDRESS = "az1qalf65k4u0vgmxhj3qyp4l2q9uz92hj9jfa6pwp"
+_SEND_FAILURE = object()
+
+
+def _multirow_plan() -> dict[str, object]:
+    return {
+        "id": _MR_PLAN_ID,
+        "status": plan_review.PLAN_STATUS_APPROVED,
+        "planned_amount_total": _MR_PLANNED_TOTAL,
+        "wallet_name": _SOURCE_WALLET,
+    }
+
+
+def _multirow_plan_rows() -> list[dict[str, object]]:
+    return [
+        {
+            "id": 210,
+            "payout_plan_id": _MR_PLAN_ID,
+            "sc_node_id": "sc-2",
+            "payout_address": _MR_SC2_ADDRESS,
+            "payout_amount": Decimal("1.004928799583"),
+            "row_status": plan_review.ROW_STATUS_APPROVED,
+        },
+        {
+            "id": 211,
+            "payout_plan_id": _MR_PLAN_ID,
+            "sc_node_id": "sc-3",
+            "payout_address": _MR_SC3_ADDRESS,
+            "payout_amount": Decimal("0.870071200416"),
+            "row_status": plan_review.ROW_STATUS_APPROVED,
+        },
+    ]
+
+
+def _multirow_preflight() -> dict[str, object]:
+    return {
+        "id": _MR_PREFLIGHT_ID,
+        "payout_plan_id": _MR_PLAN_ID,
+        "source_wallet_name": _SOURCE_WALLET,
+        "preflight_status": production_preflight.PREFLIGHT_STATUS_PASSED,
+        "execution_allowed": True,
+        "planned_amount_total": _MR_PLANNED_TOTAL,
+    }
+
+
+def _multirow_preflight_rows() -> list[dict[str, object]]:
+    return [
+        {
+            "payout_plan_row_id": plan_row["id"],
+            "sc_node_id": plan_row["sc_node_id"],
+            "payout_address": plan_row["payout_address"],
+            "payout_amount": plan_row["payout_amount"],
+            "row_status": production_preflight.ROW_STATUS_CHECKED,
+        }
+        for plan_row in _multirow_plan_rows()
+    ]
+
+
+def _multirow_address_rows() -> list[dict[str, object]]:
+    return [
+        {
+            "sc_node_id": "sc-2",
+            "payout_address": _MR_SC2_ADDRESS,
+            "status": "active",
+            "is_default": True,
+        },
+        {
+            "sc_node_id": "sc-3",
+            "payout_address": _MR_SC3_ADDRESS,
+            "status": "active",
+            "is_default": True,
+        },
+    ]
+
+
+class _FakeCursor:
+    def __init__(self, db: "_FakeExecutionDb") -> None:
+        self._db = db
+        self._rows: list[dict[str, object]] = []
+
+    def __enter__(self) -> "_FakeCursor":
+        return self
+
+    def __exit__(self, *exc: object) -> bool:
+        return False
+
+    def execute(self, sql: str, params: dict[str, object] | None = None) -> None:
+        self._rows = self._db.dispatch(sql, params)
+
+    def fetchone(self) -> dict[str, object] | None:
+        return self._rows[0] if self._rows else None
+
+    def fetchall(self) -> list[dict[str, object]]:
+        return list(self._rows)
+
+
+class _FakeConn:
+    def __init__(self, db: "_FakeExecutionDb") -> None:
+        self._db = db
+
+    def __enter__(self) -> "_FakeConn":
+        return self
+
+    def __exit__(self, *exc: object) -> bool:
+        return False
+
+    def cursor(self, row_factory: object = None) -> _FakeCursor:
+        return _FakeCursor(self._db)
+
+    def commit(self) -> None:
+        self._db.events.append(("commit",))
+
+    def set_read_only(self, value: bool) -> None:
+        pass
+
+
+class _FakeExecutionDb:
+    """In-memory stand-in for azpool_ledger; dispatches on exact builder SQL."""
+
+    def __init__(self) -> None:
+        self.events: list[tuple[object, ...]] = []
+        self.execution_state: dict[str, object] | None = None
+        self.row_states: dict[int, dict[str, object]] = {}
+        self._next_row_id = 101
+
+    def dispatch(
+        self, sql: str, params: dict[str, object] | None
+    ) -> list[dict[str, object]]:
+        if sql == executor.build_approved_payout_plan_for_execution_sql(_MR_PLAN_ID):
+            return [_multirow_plan()]
+        if sql == executor.build_approved_payout_plan_rows_for_execution_sql(
+            _MR_PLAN_ID
+        ):
+            return _multirow_plan_rows()
+        if sql == executor.build_passed_production_preflight_sql():
+            return [_multirow_preflight()]
+        if sql == executor.build_production_preflight_rows_for_execution_sql():
+            return _multirow_preflight_rows()
+        if sql == payout_addresses.build_active_default_payout_addresses_sql():
+            return _multirow_address_rows()
+        if sql == executor.build_execution_by_plan_idempotency_sql():
+            return []
+        if sql == executor.build_existing_active_production_execution_sql():
+            return []
+        if sql == executor.build_insert_production_execution_sql():
+            assert params is not None
+            self.execution_state = dict(params)
+            self.execution_state["id"] = _MR_EXECUTION_ID
+            self.events.append(("insert_execution", _MR_EXECUTION_ID))
+            return [{"id": _MR_EXECUTION_ID}]
+        if sql == executor.build_insert_production_execution_row_sql():
+            assert params is not None
+            row_id = self._next_row_id
+            self._next_row_id += 1
+            self.row_states[row_id] = dict(params)
+            self.row_states[row_id]["id"] = row_id
+            self.events.append(("insert_row", row_id, params["payout_plan_row_id"]))
+            return [{"id": row_id}]
+        if sql == executor.build_mark_production_execution_row_sent_sql():
+            assert params is not None
+            row_id = int(params["production_execution_row_id"])  # type: ignore[arg-type]
+            state = self.row_states[row_id]
+            if state["row_status"] != executor.ROW_STATUS_DRAFT:
+                return []
+            state["row_status"] = executor.ROW_STATUS_SENT
+            state["txid"] = params["txid"]
+            self.events.append(("row_sent", row_id, params["txid"]))
+            return [{"id": row_id}]
+        if sql == executor.build_mark_production_execution_row_refused_sql():
+            assert params is not None
+            row_id = int(params["production_execution_row_id"])  # type: ignore[arg-type]
+            state = self.row_states[row_id]
+            state["row_status"] = executor.ROW_STATUS_REFUSED
+            state["refusal_reason"] = params["refusal_reason"]
+            self.events.append(("row_refused", row_id))
+            return [{"id": row_id}]
+        if sql == executor.build_mark_production_execution_sent_sql():
+            assert params is not None
+            assert self.execution_state is not None
+            self.execution_state["status"] = executor.EXECUTION_STATUS_SENT
+            self.execution_state["txid"] = params["txid"]
+            self.events.append(("execution_sent", params["txid"]))
+            return [{"id": _MR_EXECUTION_ID}]
+        if sql == executor.build_mark_production_execution_refused_sql():
+            assert params is not None
+            assert self.execution_state is not None
+            self.execution_state["status"] = executor.EXECUTION_STATUS_REFUSED
+            self.execution_state["refusal_reason"] = params["refusal_reason"]
+            self.events.append(("execution_refused", params["refusal_reason"]))
+            return [{"id": _MR_EXECUTION_ID}]
+        if sql == executor.build_production_execution_details_sql(_MR_EXECUTION_ID):
+            assert self.execution_state is not None
+            return [dict(self.execution_state)]
+        if sql == executor.build_production_execution_rows_sql(_MR_EXECUTION_ID):
+            return [dict(state) for state in self.row_states.values()]
+        raise AssertionError(f"unexpected SQL in fake DB: {sql[:120]!r}")
+
+
+class _FakeWalletSubprocess:
+    """Mocked subprocess.run: getbalances + scripted sendtoaddress results."""
+
+    def __init__(self, send_results: list[object]) -> None:
+        self.send_calls: list[list[str]] = []
+        self._send_results = list(send_results)
+
+    def __call__(self, argv: list[str], **kwargs: object) -> SimpleNamespace:
+        if "getbalances" in argv:
+            return SimpleNamespace(
+                returncode=0,
+                stdout=json.dumps({"mine": {"trusted": "6.0", "immature": "0"}}),
+                stderr="",
+            )
+        if "sendtoaddress" in argv:
+            self.send_calls.append(list(argv))
+            result = self._send_results.pop(0)
+            if result is _SEND_FAILURE:
+                return SimpleNamespace(
+                    returncode=1,
+                    stdout="",
+                    stderr="wallet send failed (unit-test)",
+                )
+            return SimpleNamespace(returncode=0, stdout=f"{result}\n", stderr="")
+        raise AssertionError(f"unexpected wallet RPC argv: {argv!r}")
+
+
+def _execute_real_argv(*, allow_multiple_rows: bool) -> list[str]:
+    argv = [
+        "execute-real",
+        "--payout-plan-id",
+        str(_MR_PLAN_ID),
+        "--production-preflight-id",
+        str(_MR_PREFLIGHT_ID),
+        "--source-wallet-name",
+        _SOURCE_WALLET,
+        "--azc-bin",
+        "/usr/local/bin/azc-payout",
+        "--idempotency-key",
+        _MR_IDEMPOTENCY,
+        "--confirm-phrase",
+        _MR_CONFIRM,
+    ]
+    if allow_multiple_rows:
+        argv.insert(1, "--allow-multiple-rows")
+    return argv
+
+
+def _run_execute_real(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    allow_multiple_rows: bool,
+    send_results: list[object],
+) -> tuple[int, _FakeExecutionDb, _FakeWalletSubprocess]:
+    db = _FakeExecutionDb()
+    wallet = _FakeWalletSubprocess(send_results)
+    monkeypatch.setenv("DATABASE_URL", "postgresql://unit-test/azpool_ledger")
+    monkeypatch.setattr(
+        executor_cli.psycopg, "connect", lambda dsn: _FakeConn(db)
+    )
+    monkeypatch.setattr(executor_cli.subprocess, "run", wallet)
+    rc = executor_cli.main(_execute_real_argv(allow_multiple_rows=allow_multiple_rows))
+    return rc, db, wallet
+
+
+def test_execute_real_refuses_multirow_plan_before_any_send(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    rc, db, wallet = _run_execute_real(
+        monkeypatch,
+        allow_multiple_rows=False,
+        send_results=[],
+    )
+    capsys.readouterr()
+    assert rc == 1
+    assert wallet.send_calls == []
+    assert db.execution_state is not None
+    assert db.execution_state["status"] == executor.EXECUTION_STATUS_REFUSED
+    assert "allow-multiple-rows" in str(db.execution_state["refusal_reason"])
+    assert not [event for event in db.events if event[0] == "row_sent"]
+
+
+def test_execute_real_multirow_sends_each_row_with_own_txid(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    rc, db, wallet = _run_execute_real(
+        monkeypatch,
+        allow_multiple_rows=True,
+        send_results=["txid-A", "txid-B"],
+    )
+    capsys.readouterr()
+    assert rc == 0
+    assert len(wallet.send_calls) == 2
+    assert wallet.send_calls[0][-2:] == [_MR_SC2_ADDRESS, "1.00492879"]
+    assert wallet.send_calls[1][-2:] == [_MR_SC3_ADDRESS, "0.87007120"]
+    # Each production_execution_row_id records its own txid.
+    assert db.row_states[101]["row_status"] == executor.ROW_STATUS_SENT
+    assert db.row_states[101]["txid"] == "txid-A"
+    assert db.row_states[102]["row_status"] == executor.ROW_STATUS_SENT
+    assert db.row_states[102]["txid"] == "txid-B"
+    assert ("row_sent", 101, "txid-A") in db.events
+    assert ("row_sent", 102, "txid-B") in db.events
+    assert db.execution_state is not None
+    assert db.execution_state["status"] == executor.EXECUTION_STATUS_SENT
+
+
+def test_execute_real_sends_8dp_rounded_down_amounts_not_raw_planned(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    rc, _, wallet = _run_execute_real(
+        monkeypatch,
+        allow_multiple_rows=True,
+        send_results=["txid-A", "txid-B"],
+    )
+    capsys.readouterr()
+    assert rc == 0
+    amounts = [argv[-1] for argv in wallet.send_calls]
+    assert amounts == ["1.00492879", "0.87007120"]
+    for argv in wallet.send_calls:
+        assert "1.004928799583" not in argv
+        assert "0.870071200416" not in argv
+
+
+def test_execute_real_partial_failure_preserves_first_row_txid(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """No partial_sent status exists yet (TODO in the executor script):
+    already-broadcast rows must remain recorded as sent with their own
+    committed txid even though the overall execution is later refused."""
+    rc, db, wallet = _run_execute_real(
+        monkeypatch,
+        allow_multiple_rows=True,
+        send_results=["txid-A", _SEND_FAILURE],
+    )
+    capsys.readouterr()
+    assert rc == 1
+    assert len(wallet.send_calls) == 2
+
+    # First row stays sent and keeps its own txid.
+    assert db.row_states[101]["row_status"] == executor.ROW_STATUS_SENT
+    assert db.row_states[101]["txid"] == "txid-A"
+
+    # First row recording was committed before failure handling started.
+    row_sent_idx = db.events.index(("row_sent", 101, "txid-A"))
+    refused_idx = next(
+        i for i, event in enumerate(db.events) if event[0] == "execution_refused"
+    )
+    assert row_sent_idx < refused_idx
+    assert ("commit",) in db.events[row_sent_idx + 1 : refused_idx]
+
+    # Second row is never stamped with the first row's txid.
+    assert db.row_states[102]["row_status"] == executor.ROW_STATUS_REFUSED
+    assert db.row_states[102]["txid"] is None
+    assert ("row_sent", 102, "txid-A") not in db.events
+    assert [event for event in db.events if event[0] == "row_sent"] == [
+        ("row_sent", 101, "txid-A")
+    ]
+
+    # Execution header records the partial broadcast for the operator.
+    assert db.execution_state is not None
+    assert db.execution_state["status"] == executor.EXECUTION_STATUS_REFUSED
+    assert "partial broadcast" in str(db.execution_state["refusal_reason"])
+    assert "txid-A" in str(db.execution_state["refusal_reason"])
+
+
+def test_execute_real_script_has_no_single_row_hard_guard() -> None:
+    source = (
+        AZPOOL_ROOT / "payouts/scripts/sc_node_payout_production_executor.py"
+    ).read_text(encoding="utf-8")
+    assert "supports exactly one payout row" not in source
+    assert "plan_rows[0]" not in source

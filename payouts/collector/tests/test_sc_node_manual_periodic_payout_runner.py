@@ -225,6 +225,23 @@ def test_delegate_argv_for_single_uses_executor_script() -> None:
     ]
 
 
+def test_delegate_argv_for_single_includes_allow_multiple_rows() -> None:
+    argv = periodic_runner.build_single_executor_delegate_argv(
+        python_executable=sys.executable,
+        repo_script_path=str(
+            AZPOOL_ROOT / periodic_runner.single_executor_script_relpath()
+        ),
+        payout_plan_id=2,
+        production_preflight_id=2,
+        source_wallet_name="wallet",
+        azc_bin="/usr/local/bin/azc-payout",
+        idempotency_key="production-real-v0-plan-2",
+        executor_confirm_phrase="SEND 223.125000000000 FROM wallet FOR PLAN 2",
+    )
+    execute_real_idx = argv.index("execute-real")
+    assert "--allow-multiple-rows" in argv[execute_real_idx:]
+
+
 def test_delegate_argv_for_chunked_includes_chunk_amount() -> None:
     argv = periodic_runner.build_chunked_executor_delegate_argv(
         python_executable=sys.executable,

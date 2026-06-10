@@ -120,6 +120,19 @@ def _quantize_amount(value: Decimal) -> Decimal:
     return value.quantize(Decimal("0.000000000001"), rounding=ROUND_DOWN)
 
 
+AZCOIN_WALLET_QUANT = Decimal("0.00000001")
+
+
+def format_wallet_amount_down(value: str | Decimal) -> str:
+    """Wallet-safe send amount: 8-decimal string, always rounded down.
+
+    Planned amounts are stored with 12 decimals; the wallet only accepts 8.
+    Rounding down guarantees we never broadcast more than planned.
+    """
+    quantized = Decimal(str(value)).quantize(AZCOIN_WALLET_QUANT, rounding=ROUND_DOWN)
+    return format(quantized, "f")
+
+
 def parse_wallet_balance_from_getbalances(payload: Mapping[str, Any]) -> WalletBalance:
     return production_preflight.parse_wallet_balance_from_getbalances(payload)
 
@@ -1001,7 +1014,7 @@ def build_sendtoaddress_argv(
     payout_amount: Decimal,
 ) -> list[str]:
     assert_no_forbidden_wallet_rpc_keywords_except_sendtoaddress(azc_bin)
-    amount = planner._serialize_numeric(_quantize_amount(payout_amount))
+    amount = format_wallet_amount_down(payout_amount)
     address = str(payout_address).strip()
     if not address:
         raise ValueError("payout_address is required")

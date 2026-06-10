@@ -464,6 +464,7 @@ def build_single_executor_delegate_argv(
         python_executable,
         repo_script_path,
         "execute-real",
+        "--allow-multiple-rows",
         "--payout-plan-id",
         str(int(payout_plan_id)),
         "--production-preflight-id",

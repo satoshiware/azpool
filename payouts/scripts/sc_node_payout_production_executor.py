@@ -445,6 +445,7 @@ def _cmd_execute_real(args: argparse.Namespace) -> int:
                 return 1
             execution_id = int(inserted["id"])
             execution_row_ids: list[int] = []
+            execution_row_id_by_plan_row_id: dict[int, int] = {}
             for row in plan_rows:
                 cur.execute(
                     executor.build_insert_production_execution_row_sql(),
@@ -460,44 +461,99 @@ def _cmd_execute_real(args: argparse.Namespace) -> int:
                     },
                 )
                 row_inserted = cur.fetchone()
-                if row_inserted is not None:
-                    execution_row_ids.append(int(row_inserted["id"]))
+                if row_inserted is None:
+                    print(
+                        "failed to insert production execution row", file=sys.stderr
+                    )
+                    return 1
+                execution_row_id = int(row_inserted["id"])
+                execution_row_ids.append(execution_row_id)
+                execution_row_id_by_plan_row_id[int(row["id"])] = execution_row_id
+        # Commit the draft execution and rows before any wallet send so a
+        # crash mid-broadcast always leaves an auditable DB record.
+        conn.commit()
 
+        # (execution_row_id, txid) in send order; each entry is committed to
+        # the DB immediately after its wallet broadcast succeeds.
+        sent_row_records: list[tuple[int, str]] = []
         try:
-            if len(plan_rows) != 1:
-                raise RuntimeError("v0 execute-real supports exactly one payout row")
-            plan_row = plan_rows[0]
-            txid = _run_sendtoaddress(
-                azc_bin=args.azc_bin,
-                source_wallet_name=source_wallet,
-                payout_address=str(plan_row["payout_address"]),
-                payout_amount=planner._to_decimal(plan_row["payout_amount"]),
-            )
+            if not plan_rows:
+                raise RuntimeError("payout plan has no executable rows")
+            if len(plan_rows) != 1 and not args.allow_multiple_rows:
+                # Defense-in-depth: evaluate_execute_real_refusal already
+                # refuses this earlier; never reach a send without the flag.
+                raise RuntimeError(
+                    "execute-real refuses multiple payout rows without "
+                    "--allow-multiple-rows"
+                )
+            for plan_row in plan_rows:
+                execution_row_id = execution_row_id_by_plan_row_id[int(plan_row["id"])]
+                row_txid = _run_sendtoaddress(
+                    azc_bin=args.azc_bin,
+                    source_wallet_name=source_wallet,
+                    payout_address=str(plan_row["payout_address"]),
+                    payout_amount=planner._to_decimal(plan_row["payout_amount"]),
+                )
+                with conn.cursor(row_factory=dict_row) as cur:
+                    cur.execute(
+                        executor.build_mark_production_execution_row_sent_sql(),
+                        {
+                            "production_execution_row_id": execution_row_id,
+                            "txid": row_txid,
+                        },
+                    )
+                    if cur.fetchone() is None:
+                        raise RuntimeError(
+                            "failed to record sent production execution row "
+                            f"{execution_row_id} (broadcast txid {row_txid})"
+                        )
+                conn.commit()
+                sent_row_records.append((execution_row_id, row_txid))
+            txid = sent_row_records[0][1]
         except RuntimeError as exc:
+            sent_row_ids = {row_id for row_id, _ in sent_row_records}
+            refusal_reason = str(exc)
+            if sent_row_records:
+                # TODO: add a dedicated 'partial_sent' execution status; the
+                # current schema only supports draft/sent/confirmed/refused/
+                # void, so a partial broadcast marks the execution refused
+                # while already-broadcast rows stay recorded as 'sent' with
+                # their own committed txids (never overwritten below).
+                sent_summary = ", ".join(
+                    f"execution row {row_id} already sent txid {row_txid}"
+                    for row_id, row_txid in sent_row_records
+                )
+                refusal_reason = (
+                    f"partial broadcast: {len(sent_row_records)} of "
+                    f"{len(plan_rows)} rows sent before failure "
+                    f"({sent_summary}); {exc}"
+                )
             with conn.cursor(row_factory=dict_row) as cur:
                 cur.execute(
                     executor.build_mark_production_execution_refused_sql(),
                     {
                         "production_execution_id": execution_id,
-                        "refusal_reason": str(exc),
+                        "refusal_reason": refusal_reason,
                     },
                 )
                 for row_id in execution_row_ids:
+                    if row_id in sent_row_ids:
+                        continue
                     cur.execute(
                         executor.build_mark_production_execution_row_refused_sql(),
                         {
                             "production_execution_row_id": row_id,
-                            "refusal_reason": str(exc),
+                            "refusal_reason": refusal_reason,
                         },
                     )
             conn.commit()
             header, rows = _load_execution_details(conn, execution_id)
-            print(str(exc), file=sys.stderr)
+            print(refusal_reason, file=sys.stderr)
             _emit_json(
                 {
                     "command": "execute-real",
                     "executed": False,
-                    "refusal_reason": str(exc),
+                    "refusal_reason": refusal_reason,
                     "production_execution": executor.row_to_production_execution_dict(
                         header
                     ),
@@ -509,6 +565,8 @@ def _cmd_execute_real(args: argparse.Namespace) -> int:
             )
             return 1
 
+        # Rows were each marked sent with their own txid immediately after
+        # their broadcast; the execution header keeps the first row txid.
         with conn.cursor(row_factory=dict_row) as cur:
             cur.execute(
                 executor.build_mark_production_execution_sent_sql(),
@@ -517,14 +575,6 @@ def _cmd_execute_real(args: argparse.Namespace) -> int:
             if cur.fetchone() is None:
                 print("failed to mark production execution sent", file=sys.stderr)
                 return 1
-            for row_id in execution_row_ids:
-                cur.execute(
-                    executor.build_mark_production_execution_row_sent_sql(),
-                    {
-                        "production_execution_row_id": row_id,
-                        "txid": txid,
-                    },
-                )
         conn.commit()
 
         header, rows = _load_execution_details(conn, execution_id)
