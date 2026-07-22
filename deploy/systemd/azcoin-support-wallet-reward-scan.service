@@ -1,0 +1,18 @@
+[Unit]
+Description=AZCoin support wallet reward event scanner
+After=network-online.target postgresql.service azcoind.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=azledger
+Group=azledger
+WorkingDirectory=/opt/azcoin-super/src/azpool
+Environment=PYTHONPATH=/opt/azcoin-super/src/azpool
+EnvironmentFile=/etc/azcoin-super/pool-ledger/collector.env
+ExecStart=/opt/azcoin-super/src/azpool/.venv/bin/python payouts/scripts/support_wallet_reward_events.py scan --wallet wallet --azc-bin /usr/local/bin/azc-payout-readonly --count 5000 --write
+NoNewPrivileges=false
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/azcoin-super/pool-ledger /var/log/azcoin-super/pool-ledger
