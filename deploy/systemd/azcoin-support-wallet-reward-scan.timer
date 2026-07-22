@@ -1,0 +1,12 @@
+[Unit]
+Description=Run AZCoin support wallet reward event scanner every 10 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=10min
+AccuracySec=30s
+Persistent=true
+Unit=azcoin-support-wallet-reward-scan.service
+
+[Install]
+WantedBy=timers.target
