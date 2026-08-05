@@ -159,6 +159,32 @@ def _load_selection(
     )
 
 
+def _cap_selection_to_spendable(
+    selection: automation.FreshCycleSelection | None,
+    *,
+    config: automation.FreshCycleConfig,
+) -> automation.FreshCycleSelection | None:
+    """Trim selection so planned payout fits reserve / max_spendable_amount.
+
+    Without this, a large mature backlog makes every execute-live tick fail with
+    planned_amount_total exceeds max_spendable_amount and SC-nodes get nothing.
+    """
+    if selection is None:
+        return None
+    balance_payload = preflight_cli._run_getbalances(
+        azc_bin=config.azc_bin,
+        source_wallet_name=config.wallet_name,
+    )
+    wallet_balance = production_preflight.parse_wallet_balance_from_getbalances(
+        balance_payload
+    )
+    return automation.trim_selection_to_spendable_budget(
+        selection,
+        trusted_balance=wallet_balance.trusted,
+        reserve_fraction=config.reserve_fraction,
+    )
+
+
 def _load_credit_preview(
     conn: psycopg.Connection,
     *,
@@ -639,7 +665,10 @@ def _cmd_preview(args: argparse.Namespace, config: automation.FreshCycleConfig) 
         _maybe_scan_rewards(wallet_name=config.wallet_name, azc_bin=config.azc_bin)
     with psycopg.connect(_database_url()) as conn:
         conn.set_read_only(True)
-        selection = _load_selection(conn, config=config)
+        selection = _cap_selection_to_spendable(
+            _load_selection(conn, config=config),
+            config=config,
+        )
         credit_preview = None
         preflight_preview = None
         execution_plan = None
@@ -652,7 +681,10 @@ def _cmd_preview(args: argparse.Namespace, config: automation.FreshCycleConfig) 
                     credit_preview=credit_preview,
                 )
     if selection is None:
-        return _emit_safe_skip("no fresh mature rewards after baseline", as_json=args.json)
+        return _emit_safe_skip(
+            "no fresh mature rewards after baseline (or none fit spendable budget)",
+            as_json=args.json,
+        )
     payload = automation.build_preview_summary(
         config=config,
         selection=selection,
@@ -741,9 +773,15 @@ def _cmd_write_target(args: argparse.Namespace, config: automation.FreshCycleCon
     if args.scan_rewards_first:
         _maybe_scan_rewards(wallet_name=config.wallet_name, azc_bin=config.azc_bin)
     with psycopg.connect(_database_url()) as conn:
-        selection = _load_selection(conn, config=config)
+        selection = _cap_selection_to_spendable(
+            _load_selection(conn, config=config),
+            config=config,
+        )
         if selection is None:
-            return _emit_safe_skip("no fresh mature rewards after baseline", as_json=args.json)
+            return _emit_safe_skip(
+                "no fresh mature rewards after baseline (or none fit spendable budget)",
+                as_json=args.json,
+            )
         credit_run_id, payout_plan_id, preflight_id, preflight_preview, resume_note = _write_artifacts(
             conn,
             config=config,
@@ -796,10 +834,13 @@ def _cmd_execute_live(args: argparse.Namespace, config: automation.FreshCycleCon
         _maybe_scan_rewards(wallet_name=config.wallet_name, azc_bin=config.azc_bin)
     try:
         with psycopg.connect(_database_url()) as conn:
-            selection = _load_selection(conn, config=config)
+            selection = _cap_selection_to_spendable(
+                _load_selection(conn, config=config),
+                config=config,
+            )
             if selection is None:
                 return _emit_safe_skip(
-                    "no fresh mature rewards after baseline",
+                    "no fresh mature rewards after baseline (or none fit spendable budget)",
                     as_json=args.json,
                 )
             credit_run_id, payout_plan_id, preflight_id, preflight_preview, _resume_note = _write_artifacts(
