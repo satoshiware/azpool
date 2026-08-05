@@ -101,6 +101,95 @@ def test_rewards_before_baseline_counted_as_historical_backlog_only() -> None:
     assert selection.event_count == 1
 
 
+def test_trim_fresh_events_to_budget_takes_contiguous_oldest_prefix() -> None:
+    t0 = _BASELINE + timedelta(hours=1)
+    events = [
+        _event(1, "20", t0),
+        _event(2, "20", t0 + timedelta(minutes=10)),
+        _event(3, "20", t0 + timedelta(minutes=20)),
+    ]
+    trimmed = fresh.trim_fresh_events_to_budget(events, budget=Decimal("35"))
+    assert [int(row["reward_event_id"]) for row in trimmed] == [1]
+    assert sum((Decimal(str(row["amount"])) for row in trimmed), Decimal("0")) == Decimal("20")
+
+    trimmed2 = fresh.trim_fresh_events_to_budget(events, budget=Decimal("40.01"))
+    assert [int(row["reward_event_id"]) for row in trimmed2] == [1, 2]
+
+
+def test_trim_selection_to_spendable_budget_shrinks_coverage() -> None:
+    config = fresh.FreshCycleConfig(
+        automation_baseline=_BASELINE,
+        mode=fresh.MODE_PREVIEW,
+        wallet_name="wallet",
+        reserve_fraction=Decimal("0.50"),
+        target_single_tx_max_amount=Decimal("500"),
+        fallback_chunk_amount=Decimal("25"),
+        enable_real_execution=False,
+        runner_approval_phrase=None,
+        azc_bin="azc",
+        approved_by="test",
+        scheduler_env_path="/tmp/payout-scheduler.env",
+        min_payout_amount=None,
+    )
+    t0 = _BASELINE + timedelta(hours=1)
+    events = [
+        _event(1, "20", t0),
+        _event(2, "20", t0 + timedelta(minutes=10)),
+        _event(3, "30", t0 + timedelta(minutes=20)),
+    ]
+    selection = fresh.build_fresh_cycle_selection(
+        config=config,
+        unlinked_events=events,
+        latest_credit_run_coverage_end=None,
+        exclude_coverage_start_boundary=False,
+    )
+    assert selection is not None
+    assert selection.amount_total == Decimal("70")
+
+    # trusted=71.248..., reserve 50% => max_spendable ~35.624; fee headroom 0.01 => ~35.61
+    trimmed = fresh.trim_selection_to_spendable_budget(
+        selection,
+        trusted_balance=Decimal("71.24827061"),
+        reserve_fraction=Decimal("0.50"),
+    )
+    assert trimmed is not None
+    assert trimmed.event_count == 1
+    assert trimmed.amount_total == Decimal("20")
+    assert trimmed.coverage_end == t0 + timedelta(microseconds=1)
+
+
+def test_trim_selection_returns_none_when_first_reward_exceeds_budget() -> None:
+    config = fresh.FreshCycleConfig(
+        automation_baseline=_BASELINE,
+        mode=fresh.MODE_PREVIEW,
+        wallet_name="wallet",
+        reserve_fraction=Decimal("0.50"),
+        target_single_tx_max_amount=Decimal("500"),
+        fallback_chunk_amount=Decimal("25"),
+        enable_real_execution=False,
+        runner_approval_phrase=None,
+        azc_bin="azc",
+        approved_by="test",
+        scheduler_env_path="/tmp/payout-scheduler.env",
+        min_payout_amount=None,
+    )
+    selection = fresh.build_fresh_cycle_selection(
+        config=config,
+        unlinked_events=[_event(1, "40", _BASELINE + timedelta(hours=1))],
+        latest_credit_run_coverage_end=None,
+        exclude_coverage_start_boundary=False,
+    )
+    assert selection is not None
+    assert (
+        fresh.trim_selection_to_spendable_budget(
+            selection,
+            trusted_balance=Decimal("71.24827061"),
+            reserve_fraction=Decimal("0.50"),
+        )
+        is None
+    )
+
+
 def test_latest_credit_run_coverage_end_used_as_boundary() -> None:
     start = fresh.compute_coverage_start(
         automation_baseline=_BASELINE,
@@ -1017,7 +1106,10 @@ def test_sent_fresh_cycle_executions_sql_uses_txid_not_primary_txid() -> None:
     assert "primary_txid" not in sql
     assert "txid IS NOT NULL" in sql
     assert "status = 'sent'" in sql
-    assert "FRESH-CYCLE-" in sql
+    # Production closeout confirms ALL sent executions (catch-up + fresh-cycle),
+    # not only FRESH-CYCLE-* idempotency keys.
+    assert "FRESH-CYCLE-" not in sql
+    assert "sc_node_payout_production_execution_chunks" in sql
     assert "source_wallet_name" in sql
 
 

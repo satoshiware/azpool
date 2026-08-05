@@ -448,6 +448,102 @@ def summarize_historical_backlog(
     return count, total
 
 
+def compute_spendable_budget(
+    trusted_balance: Decimal,
+    reserve_fraction: Decimal,
+    *,
+    fee_headroom: Decimal = Decimal("0.01"),
+) -> Decimal:
+    """Trusted balance minus reserve, minus a small fee headroom."""
+    reserve_amount = payout_planner.compute_reserve_amount(
+        trusted_balance,
+        reserve_fraction,
+    )
+    max_spendable = payout_planner.compute_max_spendable_amount(
+        trusted_balance,
+        reserve_amount,
+    )
+    budget = max_spendable - fee_headroom
+    if budget <= 0:
+        return Decimal("0")
+    return payout_planner._quantize_amount(budget)
+
+
+def trim_fresh_events_to_budget(
+    events: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...],
+    *,
+    budget: Decimal,
+) -> list[Mapping[str, Any]]:
+    """Oldest-first contiguous prefix of rewards that fit under spendable budget.
+
+    Fresh-cycle previously selected *all* mature unlinked events in the coverage
+    window. When that sum exceeded max_spendable_amount (50% reserve), execute-live
+    failed every tick and SC-nodes received nothing. Cap each cycle to what the
+    wallet can actually send.
+
+    Contiguous (stop at first that does not fit) so coverage_end still matches
+    credit-run SQL over [coverage_start, coverage_end].
+    """
+    if budget <= 0:
+        return []
+    selected: list[Mapping[str, Any]] = []
+    total = Decimal("0")
+    for row in sorted(events, key=_event_time):
+        amount = payout_planner._quantize_amount(_to_decimal(row.get("amount")))
+        if amount <= 0:
+            continue
+        if total + amount > budget:
+            break
+        selected.append(row)
+        total = payout_planner._quantize_amount(total + amount)
+    return selected
+
+
+def trim_selection_to_spendable_budget(
+    selection: FreshCycleSelection,
+    *,
+    trusted_balance: Decimal,
+    reserve_fraction: Decimal,
+    fee_headroom: Decimal = Decimal("0.01"),
+) -> FreshCycleSelection | None:
+    budget = compute_spendable_budget(
+        trusted_balance,
+        reserve_fraction,
+        fee_headroom=fee_headroom,
+    )
+    trimmed = trim_fresh_events_to_budget(
+        selection.fresh_reward_events,
+        budget=budget,
+    )
+    if not trimmed:
+        return None
+    if len(trimmed) == selection.event_count:
+        return selection
+    coverage_end = compute_coverage_end_for_events(trimmed)
+    # Re-apply coverage filter so coverage_end/event set stay consistent.
+    trimmed = select_fresh_reward_events(
+        trimmed,
+        coverage_start=selection.coverage_start,
+        coverage_end=coverage_end,
+        exclude_coverage_start_boundary=selection.exclude_coverage_start_boundary,
+    )
+    if not trimmed:
+        return None
+    amount_total = sum((_to_decimal(row.get("amount")) for row in trimmed), Decimal("0"))
+    return FreshCycleSelection(
+        automation_baseline=selection.automation_baseline,
+        latest_credit_run_coverage_end=selection.latest_credit_run_coverage_end,
+        coverage_start=selection.coverage_start,
+        coverage_end=coverage_end,
+        exclude_coverage_start_boundary=selection.exclude_coverage_start_boundary,
+        fresh_reward_events=tuple(trimmed),
+        event_count=len(trimmed),
+        amount_total=amount_total,
+        historical_backlog_count=selection.historical_backlog_count,
+        historical_backlog_amount=selection.historical_backlog_amount,
+    )
+
+
 def build_fresh_cycle_selection(
     *,
     config: FreshCycleConfig,
@@ -1032,8 +1128,16 @@ SELECT
   updated_at
 FROM sc_node_payout_production_executions
 WHERE status = 'sent'
-  AND txid IS NOT NULL
-  AND idempotency_key LIKE 'FRESH-CYCLE-%'
+  AND (
+    txid IS NOT NULL
+    OR EXISTS (
+      SELECT 1
+      FROM sc_node_payout_production_execution_chunks c
+      WHERE c.production_execution_id = sc_node_payout_production_executions.id
+        AND c.chunk_status = 'sent'
+        AND c.txid IS NOT NULL
+    )
+  )
 ORDER BY id ASC
 """.strip()
     credit_ledger._assert_readonly_sql(sql)
