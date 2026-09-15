@@ -459,3 +459,19 @@ def test_script_has_no_send_rpc_calls() -> None:
         "walletpassphrase",
     ):
         assert forbidden not in source
+
+
+@pytest.mark.parametrize("received,matched", [("1.87499999", True), ("1.00492879", False)])
+def test_combined_wallet_payment_matches_total_and_preserves_credit_rows(received, matched):
+    rows = [
+        dict(_execution_row(), txid=_TXID, payout_amount=Decimal("1.004928799583")),
+        dict(_execution_row(), id=11, sc_node_id="sc-3", txid=_TXID,
+             payout_amount=Decimal("0.870071200416")),
+    ]
+    preview = reconciliation.compare_reconciliation(
+        _confirmed_execution(), rows,
+        reconciliation.parse_source_gettransaction(_source_payload(), _TXID),
+        reconciliation.parse_receiver_transactions_json([_receiver_row(amount=received)], _TXID),
+    )
+    assert preview.matched is matched
+    assert [row.expected_amount for row in preview.rows] == [row["payout_amount"] for row in rows]

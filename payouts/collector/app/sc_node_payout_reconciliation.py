@@ -586,6 +586,7 @@ def _compare_row(
     execution_row: Mapping[str, Any],
     receiver_evidence: ReceiverTransactionEvidence | None,
     execution_txid: str,
+    wallet_payment_amount: Decimal | None = None,
 ) -> ReconciliationRowPreview:
     row_id = int(execution_row["id"])
     sc_node_id = str(execution_row["sc_node_id"])
@@ -613,7 +614,8 @@ def _compare_row(
         reasons.append("receiver category must be receive")
     if receiver_evidence.address != expected_address:
         reasons.append("receiver address mismatch")
-    if receiver_evidence.amount != expected_amount:
+    comparison_amount = expected_amount if wallet_payment_amount is None else wallet_payment_amount
+    if receiver_evidence.amount != comparison_amount:
         reasons.append("receiver amount mismatch")
 
     if reasons:
@@ -670,11 +672,28 @@ def compare_reconciliation(
     if source_evidence.confirmations < 1:
         header_reasons.append("source confirmations pending")
 
+    # Multiple ledger rows may share a single wallet payment. Compare the
+    # observed transfer against its total, retaining each row's credit amount.
+    wallet_groups: dict[tuple[str, str], list[Mapping[str, Any]]] = {}
+    for row in execution_rows:
+        key = (str(row.get("txid") or execution_txid), str(row["payout_address"]).strip())
+        wallet_groups.setdefault(key, []).append(row)
+    wallet_amounts = {
+        key: sum((_to_decimal(row.get("payout_amount")) for row in rows), Decimal("0")).quantize(
+            Decimal("0.00000001"), rounding=ROUND_DOWN
+        )
+        for key, rows in wallet_groups.items()
+        if len(rows) > 1 and all(row.get("txid") for row in rows)
+    }
+
     row_previews = tuple(
         _compare_row(
             execution_row=row,
             receiver_evidence=receiver_evidence,
-            execution_txid=execution_txid,
+            execution_txid=str(row.get("txid") or execution_txid),
+            wallet_payment_amount=wallet_amounts.get(
+                (str(row.get("txid") or execution_txid), str(row["payout_address"]).strip())
+            ),
         )
         for row in execution_rows
     )

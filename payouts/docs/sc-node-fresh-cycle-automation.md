@@ -158,3 +158,22 @@ sudo systemctl daemon-reload
 - execute-live delegates to existing manual periodic payout runner with cadence override reason `fresh-cycle-automation`
 - Secrets/phrases redacted in log helper output
 - write-target idempotency: reuses existing fresh-cycle credit run / plan / preflight for the same coverage window instead of duplicating rows; resumes payout plan write when a credit run exists without a plan
+
+
+## One payment per destination wallet
+
+Automatic fresh cycles select the single executor after the balance, reserve,
+address and minimum-payout checks pass. UTXO fragmentation and chunk-size
+recommendations remain diagnostic; they no longer split automatic payments.
+The executor groups approved rows by destination address, sums their amounts,
+and rounds the combined payment down to the wallet's eight decimal places.
+Each contributing ledger row retains its amount and records the same transaction
+ID. Distinct addresses receive separate transactions during the same cycle.
+If a full wallet payment fails, execution stops without retrying it as chunks.
+Payments already sent to other addresses remain recorded.
+
+The 30-minute timer is unchanged. This applies to the eligible rewards selected
+for each fresh cycle; it does not sweep historical unpaid plans or immature
+rewards. Explicit manual chunked execution and reconciliation of older chunked
+payments remain available. Reconciliation recognizes rows sharing a wallet
+address and transaction ID as one combined payment.

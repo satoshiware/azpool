@@ -881,3 +881,27 @@ def test_execute_real_script_has_no_single_row_hard_guard() -> None:
     ).read_text(encoding="utf-8")
     assert "supports exactly one payout row" not in source
     assert "plan_rows[0]" not in source
+
+
+def test_execute_real_combines_rows_for_same_wallet(monkeypatch, capsys):
+    monkeypatch.setitem(globals(), "_MR_SC3_ADDRESS", _MR_SC2_ADDRESS)
+    rc, db, wallet = _run_execute_real(
+        monkeypatch, allow_multiple_rows=True, send_results=["txid-combined"],
+    )
+    capsys.readouterr()
+    assert rc == 0
+    assert len(wallet.send_calls) == 1
+    assert wallet.send_calls[0][-2:] == [_MR_SC2_ADDRESS, "1.87499999"]
+    assert {row["txid"] for row in db.row_states.values()} == {"txid-combined"}
+    assert all(row["row_status"] == executor.ROW_STATUS_SENT for row in db.row_states.values())
+
+
+def test_execute_real_combined_wallet_failure_does_not_retry_chunks(monkeypatch, capsys):
+    monkeypatch.setitem(globals(), "_MR_SC3_ADDRESS", _MR_SC2_ADDRESS)
+    rc, db, wallet = _run_execute_real(
+        monkeypatch, allow_multiple_rows=True, send_results=[_SEND_FAILURE],
+    )
+    capsys.readouterr()
+    assert rc == 1
+    assert len(wallet.send_calls) == 1
+    assert all(row["row_status"] == executor.ROW_STATUS_REFUSED for row in db.row_states.values())
