@@ -486,29 +486,41 @@ def _cmd_execute_real(args: argparse.Namespace) -> int:
                     "execute-real refuses multiple payout rows without "
                     "--allow-multiple-rows"
                 )
+            wallet_rows: dict[str, list] = {}
             for plan_row in plan_rows:
-                execution_row_id = execution_row_id_by_plan_row_id[int(plan_row["id"])]
+                wallet_rows.setdefault(str(plan_row["payout_address"]), []).append(plan_row)
+            for payout_address, grouped_rows in wallet_rows.items():
                 row_txid = _run_sendtoaddress(
                     azc_bin=args.azc_bin,
                     source_wallet_name=source_wallet,
-                    payout_address=str(plan_row["payout_address"]),
-                    payout_amount=planner._to_decimal(plan_row["payout_amount"]),
+                    payout_address=payout_address,
+                    payout_amount=sum(
+                        (planner._to_decimal(row["payout_amount"]) for row in grouped_rows),
+                        Decimal("0"),
+                    ),
                 )
+                group_records = [
+                    (execution_row_id_by_plan_row_id[int(row["id"])], row_txid)
+                    for row in grouped_rows
+                ]
+                # Remember every broadcast row before recording it, so a
+                # recording error cannot relabel a paid row as unsent.
+                sent_row_records.extend(group_records)
                 with conn.cursor(row_factory=dict_row) as cur:
-                    cur.execute(
-                        executor.build_mark_production_execution_row_sent_sql(),
-                        {
-                            "production_execution_row_id": execution_row_id,
-                            "txid": row_txid,
-                        },
-                    )
-                    if cur.fetchone() is None:
-                        raise RuntimeError(
-                            "failed to record sent production execution row "
-                            f"{execution_row_id} (broadcast txid {row_txid})"
+                    for execution_row_id, _ in group_records:
+                        cur.execute(
+                            executor.build_mark_production_execution_row_sent_sql(),
+                            {
+                                "production_execution_row_id": execution_row_id,
+                                "txid": row_txid,
+                            },
                         )
+                        if cur.fetchone() is None:
+                            raise RuntimeError(
+                                "failed to record sent production execution row "
+                                f"{execution_row_id} (broadcast txid {row_txid})"
+                            )
                 conn.commit()
-                sent_row_records.append((execution_row_id, row_txid))
             txid = sent_row_records[0][1]
         except RuntimeError as exc:
             sent_row_ids = {row_id for row_id, _ in sent_row_records}

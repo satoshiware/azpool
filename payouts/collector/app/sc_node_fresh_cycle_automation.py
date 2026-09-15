@@ -621,26 +621,24 @@ def build_execution_plan(
     min_payout_refusal: str | None = None,
 ) -> FreshCycleExecutionPlan:
     policy = preflight_preview.utxo_chunking_policy
-    mode = policy.recommended_execution_mode
+    # Automatic cycles pay each destination in full. Fragmentation estimates
+    # are advisory: the wallet builds the transaction or refuses the send.
+    # Never fall back to partial payments when a full payment cannot be built.
+    mode = production_preflight.RECOMMENDED_EXECUTION_MODE_SINGLE
     chunk_amount: Decimal | None = None
     expected_chunk_count: int | None = None
     executor_phrase: str | None = None
-    if min_payout_refusal is not None:
+    if (
+        min_payout_refusal is not None
+        or not preflight_preview.execution_allowed
+        or policy.recommended_execution_mode == production_preflight.RECOMMENDED_EXECUTION_MODE_HALT
+    ):
         mode = production_preflight.RECOMMENDED_EXECUTION_MODE_HALT
-    elif mode == production_preflight.RECOMMENDED_EXECUTION_MODE_SINGLE:
+    else:
         executor_phrase = production_executor.build_expected_confirmation_phrase(
             payout_plan_id,
             preflight_preview.planned_amount_total,
             source_wallet_name,
-        )
-    elif mode == production_preflight.RECOMMENDED_EXECUTION_MODE_CHUNKED:
-        chunk_amount = policy.recommended_chunk_size
-        expected_chunk_count = policy.estimated_chunk_count
-        executor_phrase = chunked_executor.build_chunked_confirmation_phrase(
-            payout_plan_id=payout_plan_id,
-            planned_amount_total=preflight_preview.planned_amount_total,
-            source_wallet_name=source_wallet_name,
-            chunk_count=expected_chunk_count,
         )
     refusal_reason = resolve_execution_refusal_reason(
         preflight_preview=preflight_preview,

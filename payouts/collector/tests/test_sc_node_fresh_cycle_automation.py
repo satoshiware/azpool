@@ -279,7 +279,7 @@ def test_execute_live_refuses_without_runner_phrase() -> None:
     assert fresh.ENV_RUNNER_APPROVAL_PHRASE in refusal
 
 
-def test_execute_live_builds_expected_chunked_confirmation_phrase() -> None:
+def test_execute_live_uses_single_payment_despite_chunk_recommendation() -> None:
     preview = production_preflight.ProductionPayoutPreflightPreview(
         payout_plan_id=5,
         source_wallet_name="wallet",
@@ -323,8 +323,11 @@ def test_execute_live_builds_expected_chunked_confirmation_phrase() -> None:
         source_wallet_name="wallet",
     )
     assert plan.executor_confirm_phrase == (
-        "SEND CHUNKED 39.375000000000 FROM wallet FOR PLAN 5 IN 21 CHUNKS"
+        "SEND 39.375000000000 FROM wallet FOR PLAN 5"
     )
+    assert plan.recommended_execution_mode == "single"
+    assert plan.chunk_amount is None
+    assert plan.expected_chunk_count is None
 
 
 def test_execute_live_delegates_to_manual_runner_not_direct_send() -> None:
@@ -338,7 +341,7 @@ def test_execute_live_delegates_to_manual_runner_not_direct_send() -> None:
         source_wallet_name="wallet",
         azc_bin="/usr/local/bin/azc-payout",
         runner_approval_phrase=fresh.RUNNER_APPROVAL_PHRASE,
-        executor_confirm_phrase="SEND CHUNKED 39.375000000000 FROM wallet FOR PLAN 5 IN 21 CHUNKS",
+        executor_confirm_phrase="SEND 39.375000000000 FROM wallet FOR PLAN 5",
         chunk_amount=Decimal("1.875000000000"),
     )
     assert "sc_node_manual_periodic_payout_runner.py" in argv[1]
