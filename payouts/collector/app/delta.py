@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from decimal import Decimal
+from decimal import Decimal, localcontext
 
 
 @dataclass(frozen=True)
@@ -80,8 +80,15 @@ def compute_delta(
     if not shares_increased and not work_increased:
         return None
 
-    accepted_delta = curr_shares - prev_shares if shares_increased else Decimal("0")
-    work_delta = curr_work - prev_work if work_increased else Decimal("0")
+    # Preserve decimal counter digits; the default context silently rounded the
+    # incident delta before it reached PostgreSQL. This cannot recover digits
+    # already lost by the vendor's f64 counter.
+    with localcontext() as context:
+        values = (prev_shares, curr_shares, prev_work, curr_work)
+        context.prec = max(80, max(v.adjusted() for v in values)
+                           - min(v.as_tuple().exponent for v in values) + 3)
+        accepted_delta = curr_shares - prev_shares if shares_increased else Decimal("0")
+        work_delta = curr_work - prev_work if work_increased else Decimal("0")
 
     return DeltaComputation(
         accepted_delta=accepted_delta,

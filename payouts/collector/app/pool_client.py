@@ -77,7 +77,7 @@ def fetch_health(base_url: str, *, timeout_seconds: int = 10) -> dict[str, Any]:
     try:
         response = requests.get(url, timeout=timeout_seconds)
         response.raise_for_status()
-        payload = response.json()
+        payload = response.json(parse_float=Decimal)
     except requests.RequestException as exc:
         raise PoolMonitoringError(f"health check failed for {base_url}: {exc}") from exc
     except ValueError as exc:
@@ -103,7 +103,7 @@ def fetch_clients(
             timeout=timeout_seconds,
         )
         response.raise_for_status()
-        payload = response.json()
+        payload = response.json(parse_float=Decimal)
     except requests.RequestException as exc:
         raise PoolMonitoringError(f"clients list failed for {base_url}: {exc}") from exc
     except ValueError as exc:
@@ -128,7 +128,7 @@ def fetch_client_channels(
             timeout=timeout_seconds,
         )
         response.raise_for_status()
-        payload = response.json()
+        payload = response.json(parse_float=Decimal)
     except requests.RequestException as exc:
         raise PoolMonitoringError(
             f"channels fetch failed for {base_url} client_id={client_id}: {exc}"

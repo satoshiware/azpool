@@ -3,8 +3,12 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from decimal import Decimal, ROUND_DOWN
+from decimal import Decimal, ROUND_DOWN, localcontext
 from typing import Any, Mapping
+
+# NUMERIC(38,18) has 20 integer digits. Refuse, never clamp, discard,
+# or widen invalid work. A refusal retains all raw evidence for repair.
+MAX_CREDIT_WORK = Decimal("99999999999999999999.999999999999999999")
 
 CREDIT_MATURITY_STATUS = "mature"
 CREDIT_RUN_STATUSES = frozenset({"draft", "reviewed", "void"})
@@ -204,7 +208,9 @@ def build_sc_node_work_share_sql() -> str:
 SELECT
   d.sc_node_id,
   n.display_name AS sc_node_display_name,
-  COALESCE(SUM(d.work_delta), 0) AS work_delta_total
+  COALESCE(SUM(d.work_delta), 0) AS work_delta_total,
+  COUNT(*) FILTER (WHERE d.work_delta >= 1e20 OR d.work_delta < 0
+    OR (d.accepted_delta > 0 AND d.work_delta = 0)) AS invalid_work_rows
 FROM pool_share_work_deltas d
 LEFT JOIN sc_nodes n ON n.id = d.sc_node_id
 WHERE d.sc_node_id IS NOT NULL
@@ -226,7 +232,9 @@ def build_unmapped_work_sql() -> str:
 SELECT
   COALESCE(SUM(work_delta), 0) AS work_delta_total,
   COALESCE(SUM(accepted_delta), 0) AS accepted_delta_total,
-  COUNT(*)::bigint AS delta_rows
+  COUNT(*)::bigint AS delta_rows,
+  COUNT(*) FILTER (WHERE work_delta >= 1e20 OR work_delta < 0
+    OR (accepted_delta > 0 AND work_delta = 0)) AS invalid_work_rows
 FROM pool_share_work_deltas
 WHERE sc_node_id IS NULL
   AND observed_from < %(coverage_end)s
@@ -544,6 +552,10 @@ def evaluate_allocation_refusal(
     mapped_work_total: Decimal,
     coverage_gap: bool,
 ) -> str | None:
+    if not mapped_work_total.is_finite() or mapped_work_total < 0:
+        return "work accounting anomaly: non-finite or negative mapped work; evidence review required"
+    if mapped_work_total > MAX_CREDIT_WORK:
+        return "work accounting anomaly: mapped work exceeds NUMERIC(38,18); evidence-backed correction required"
     if coverage_gap:
         return "coverage gap: pool telemetry and mature rewards do not overlap"
     if reward_event_count <= 0 or reward_amount_total <= 0:
@@ -554,6 +566,17 @@ def evaluate_allocation_refusal(
 
 
 def build_credit_run_preview(
+    *, wallet_name: str, coverage: CreditCoverage,
+    reward_rows: list[Mapping[str, Any]], sc_node_rows: list[Mapping[str, Any]],
+    unmapped_row: Mapping[str, Any] | None,
+) -> CreditRunPreview:
+    with localcontext() as context:
+        context.prec = 80
+        return _build_credit_run_preview(wallet_name=wallet_name, coverage=coverage,
+            reward_rows=reward_rows, sc_node_rows=sc_node_rows, unmapped_row=unmapped_row)
+
+
+def _build_credit_run_preview(
     *,
     wallet_name: str,
     coverage: CreditCoverage,
@@ -585,6 +608,18 @@ def build_credit_run_preview(
         mapped_work_total=mapped_work_total,
         coverage_gap=coverage.coverage_gap,
     )
+    if (not unmapped.work_delta_total.is_finite()
+            or unmapped.work_delta_total < 0
+            or unmapped.work_delta_total > MAX_CREDIT_WORK):
+        refusal_reason = "work accounting anomaly: invalid unmapped work; evidence review required"
+    if any(not _to_decimal(row.get("work_delta_total")).is_finite()
+           or _to_decimal(row.get("work_delta_total")) < 0
+           or _to_decimal(row.get("work_delta_total")) > MAX_CREDIT_WORK
+           for row in sc_node_rows):
+        refusal_reason = "work accounting anomaly: invalid node work; evidence review required"
+    if (any(_to_int(row.get("invalid_work_rows")) > 0 for row in sc_node_rows)
+            or _to_int((unmapped_row or {}).get("invalid_work_rows")) > 0):
+        refusal_reason = "work accounting anomaly: impossible or precision-lost source deltas; replay evidence required"
     sc_node_credits: list[ScNodeCreditPreview] = []
     if refusal_reason is None and mapped_work_total > 0:
         for row in sc_node_rows:
