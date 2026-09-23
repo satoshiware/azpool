@@ -77,6 +77,28 @@ def test_resolve_sc_node_id_longest_prefix_wins() -> None:
     assert resolve_sc_node_id("baveetstudy.miner1", mappings) == "sc-3"
 
 
+def test_resolve_sc_node_id_shared_account_needs_sub_name_prefix() -> None:
+    account_prefix = IdentityMapping(
+        id=1, sc_node_id="circle-01", match_type="prefix", match_value="azc-Y69004JG90205."
+    )
+    sub_name_exact = IdentityMapping(
+        id=5, sc_node_id="frontier", match_type="exact", match_value="azc-Y69004JG90205.Frontier"
+    )
+    sub_name_prefix = IdentityMapping(
+        id=6, sc_node_id="frontier", match_type="prefix", match_value="azc-Y69004JG90205.Frontier."
+    )
+
+    # Exact on the sub-name misses suffixed identities, which then fall to the account prefix.
+    assert resolve_sc_node_id(
+        "azc-Y69004JG90205.Frontier.miner4", [account_prefix, sub_name_exact]
+    ) == "circle-01"
+
+    mappings = [account_prefix, sub_name_exact, sub_name_prefix]
+    assert resolve_sc_node_id("azc-Y69004JG90205.Frontier.miner4", mappings) == "frontier"
+    assert resolve_sc_node_id("azc-Y69004JG90205.Frontier.miner1", mappings) == "frontier"
+    assert resolve_sc_node_id("azc-Y69004JG90205.circle-01.miner851", mappings) == "circle-01"
+
+
 def test_resolve_sc_node_id_ignores_inactive_mapping() -> None:
     mappings = [
         IdentityMapping(id=1, sc_node_id="sc-3", match_type="prefix", match_value="baveetstudy."),
